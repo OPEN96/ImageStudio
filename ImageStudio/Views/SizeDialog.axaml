@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ImageStudio.Views.SizeDialog"
+        Width="392"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        RequestedThemeVariant="Dark"
+        Background="{StaticResource PanelBg}"
+        FontFamily="Microsoft YaHei UI, Segoe UI, Inter"
+        Title="尺寸">
+
+  <StackPanel Margin="22,18,22,20" Spacing="14">
+    <TextBlock x:Name="HeaderText" Text="尺寸" FontSize="15" Foreground="{StaticResource TextPrimary}" />
+
+    <Grid ColumnDefinitions="*,12,*">
+      <StackPanel Grid.Column="0" Spacing="6">
+        <TextBlock Text="宽度 (px)" Classes="value" />
+        <NumericUpDown x:Name="WidthBox" Minimum="1" Maximum="30000" Increment="1" FormatString="0" />
+      </StackPanel>
+      <StackPanel Grid.Column="2" Spacing="6">
+        <TextBlock Text="高度 (px)" Classes="value" />
+        <NumericUpDown x:Name="HeightBox" Minimum="1" Maximum="30000" Increment="1" FormatString="0" />
+      </StackPanel>
+    </Grid>
+
+    <TextBlock x:Name="HintText" Classes="hint" Text="" />
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Classes="chip" Content="取消" Width="88" Click="OnCancelClick" />
+      <Button Classes="accent" x:Name="OkButton" Content="确定" Width="104" Click="OnOkClick" />
+    </StackPanel>
+  </StackPanel>
+</Window>

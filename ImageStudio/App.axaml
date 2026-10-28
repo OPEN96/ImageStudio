@@ -1,0 +1,26 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ImageStudio.App"
+             RequestedThemeVariant="Dark">
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <SolidColorBrush x:Key="AppBg" Color="#17171B" />
+      <SolidColorBrush x:Key="PanelBg" Color="#1F1F26" />
+      <SolidColorBrush x:Key="PanelBgAlt" Color="#262630" />
+      <SolidColorBrush x:Key="LineBrush" Color="#31313C" />
+      <SolidColorBrush x:Key="TextPrimary" Color="#E9E9F0" />
+      <SolidColorBrush x:Key="TextMuted" Color="#9595A6" />
+      <SolidColorBrush x:Key="AccentBrush" Color="#5B8DFF" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#749EFF" />
+      <SolidColorBrush x:Key="HoverBg" Color="#2C2C36" />
+      <SolidColorBrush x:Key="ChipBg" Color="#2A2A34" />
+      <SolidColorBrush x:Key="ChipHoverBg" Color="#343441" />
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://ImageStudio/Styles/AppStyles.axaml" />
+  </Application.Styles>
+</Application>

@@ -1,0 +1,334 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ImageStudio.ViewModels"
+        xmlns:controls="using:ImageStudio.Controls"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="ImageStudio.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        d:DesignWidth="1360" d:DesignHeight="860"
+        Title="ImageStudio · 图像编辑器"
+        Width="1360" Height="860"
+        MinWidth="1040" MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        RequestedThemeVariant="Dark"
+        Background="{StaticResource AppBg}"
+        FontFamily="Microsoft YaHei UI, Segoe UI, Inter"
+        DragDrop.AllowDrop="True">
+
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+N" Command="{Binding NewCommand}" />
+    <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+S" Command="{Binding SaveAsCommand}" />
+    <KeyBinding Gesture="Ctrl+Z" Command="{Binding UndoCommand}" />
+    <KeyBinding Gesture="Ctrl+Y" Command="{Binding RedoCommand}" />
+    <KeyBinding Gesture="Ctrl+0" Command="{Binding FitToWindowCommand}" />
+    <KeyBinding Gesture="Ctrl+1" Command="{Binding ZoomActualCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding BeginCropCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding CancelCropCommand}" />
+  </Window.KeyBindings>
+
+  <DockPanel LastChildFill="True">
+
+    <!-- ============================ 顶部：菜单 + 工具栏 ============================ -->
+    <Border DockPanel.Dock="Top"
+            Background="{StaticResource PanelBg}"
+            BorderBrush="{StaticResource LineBrush}"
+            BorderThickness="0,0,0,1">
+      <StackPanel>
+
+        <Menu DockPanel.Dock="Top" Margin="6,2" FontSize="12">
+          <MenuItem Header="文件(_F)">
+            <MenuItem Header="新建画布…" Command="{Binding NewCommand}" />
+            <MenuItem Header="打开…" Command="{Binding OpenCommand}" />
+            <Separator />
+            <MenuItem Header="保存" Command="{Binding SaveCommand}" />
+            <MenuItem Header="另存为…" Command="{Binding SaveAsCommand}" />
+            <Separator />
+            <MenuItem Header="退出" Command="{Binding ExitCommand}" />
+          </MenuItem>
+          <MenuItem Header="编辑(_E)">
+            <MenuItem Header="撤销" Command="{Binding UndoCommand}" />
+            <MenuItem Header="重做" Command="{Binding RedoCommand}" />
+          </MenuItem>
+          <MenuItem Header="图像(_I)">
+            <MenuItem Header="裁剪" Command="{Binding BeginCropCommand}" />
+            <MenuItem Header="调整图像大小…" Command="{Binding ResizeImageCommand}" />
+            <Separator />
+            <MenuItem Header="顺时针旋转 90°" Command="{Binding RotateClockwiseCommand}" />
+            <MenuItem Header="逆时针旋转 90°" Command="{Binding RotateCounterClockwiseCommand}" />
+            <MenuItem Header="旋转 180°" Command="{Binding Rotate180Command}" />
+            <Separator />
+            <MenuItem Header="水平翻转" Command="{Binding FlipHorizontalCommand}" />
+            <MenuItem Header="垂直翻转" Command="{Binding FlipVerticalCommand}" />
+          </MenuItem>
+          <MenuItem Header="滤镜(_L)">
+            <MenuItem Header="灰度" Command="{Binding GrayscaleCommand}" />
+            <MenuItem Header="反色" Command="{Binding InvertCommand}" />
+            <MenuItem Header="棕褐色" Command="{Binding SepiaCommand}" />
+            <MenuItem Header="边缘检测" Command="{Binding EdgesCommand}" />
+            <MenuItem Header="高斯模糊" Command="{Binding BlurCommand}" />
+            <MenuItem Header="锐化" Command="{Binding SharpenCommand}" />
+          </MenuItem>
+          <MenuItem Header="视图(_V)">
+            <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
+            <MenuItem Header="缩小" Command="{Binding ZoomOutCommand}" />
+            <MenuItem Header="实际大小 100%" Command="{Binding ZoomActualCommand}" />
+            <MenuItem Header="适应窗口" Command="{Binding FitToWindowCommand}" />
+            <Separator />
+            <MenuItem Header="显示棋盘格背景" Command="{Binding ToggleCheckerboardCommand}" />
+          </MenuItem>
+          <MenuItem Header="帮助(_H)">
+            <MenuItem Header="快捷键：Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Z 撤销" IsEnabled="False" />
+            <MenuItem Header="快捷键：Ctrl+0 适应窗口 / Ctrl+1 实际大小" IsEnabled="False" />
+            <MenuItem Header="滚轮缩放 · 左键拖动平移 · 裁剪模式下拖动框选" IsEnabled="False" />
+          </MenuItem>
+        </Menu>
+
+        <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="8,5">
+          <StackPanel Orientation="Horizontal" Spacing="2">
+
+            <Button Classes="tool" Command="{Binding OpenCommand}" ToolTip.Tip="打开图片 (Ctrl+O)">
+              <PathIcon Width="17" Height="17"
+                        Data="M10,4H4C2.9,4 2.01,4.9 2.01,6L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V8c0,-1.1 -0.9,-2 -2,-2h-8l-2,-2z" />
+            </Button>
+            <Button Classes="tool" Command="{Binding SaveCommand}" ToolTip.Tip="保存 (Ctrl+S)">
+              <PathIcon Width="17" Height="17"
+                        Data="M17,3H5c-1.11,0 -2,0.9 -2,2v14c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V7l-4,-4zM12,19c-1.66,0 -3,-1.34 -3,-3s1.34,-3 3,-3 3,1.34 3,3 -1.34,3 -3,3zM15,9H5V5h10v4z" />
+            </Button>
+
+            <Rectangle Width="1" Height="18" Margin="6,0" Fill="{StaticResource LineBrush}" />
+
+            <Button Classes="tool" Command="{Binding UndoCommand}" ToolTip.Tip="撤销 (Ctrl+Z)">
+              <PathIcon Width="17" Height="17"
+                        Data="M12.5,8c-2.65,0 -5.05,0.99 -6.9,2.6L2,7v9h9l-3.62,-3.62c1.39,-1.16 3.16,-1.88 5.12,-1.88 3.54,0 6.55,2.31 7.6,5.5l2.37,-0.78C21.08,11.03 17.15,8 12.5,8z" />
+            </Button>
+            <Button Classes="tool" Command="{Binding RedoCommand}" ToolTip.Tip="重做 (Ctrl+Y)">
+              <PathIcon Width="17" Height="17"
+                        Data="M18.4,10.6C16.55,8.99 14.15,8 11.5,8c-4.65,0 -8.58,3.03 -9.96,7.22L3.9,16c1.05,-3.19 4.05,-5.5 7.6,-5.5 1.95,0 3.73,0.72 5.12,1.88L13,16h9V7l-3.6,3.6z" />
+            </Button>
+
+            <Rectangle Width="1" Height="18" Margin="6,0" Fill="{StaticResource LineBrush}" />
+
+            <Button Classes="tool" Command="{Binding BeginCropCommand}" ToolTip.Tip="裁剪">
+              <PathIcon Width="17" Height="17"
+                        Data="M17,15h2V7c0,-1.1 -0.9,-2 -2,-2H9v2h8v8zM7,17V1H5v4H1v2h4v10c0,1.1 0.9,2 2,2h10v4h2v-4h4v-2H7z" />
+            </Button>
+            <Button Classes="tool" Command="{Binding RotateCounterClockwiseCommand}" ToolTip.Tip="逆时针旋转 90°">
+              <PathIcon Width="17" Height="17"
+                        Data="M7.11,8.53L5.7,7.11C4.8,8.27 4.24,9.61 4.07,11h2.02c0.14,-0.87 0.49,-1.72 1.02,-2.47zM6.09,13H4.07c0.17,1.39 0.72,2.73 1.62,3.89l1.41,-1.42c-0.52,-0.75 -0.87,-1.59 -1.01,-2.47zM7.1,18.32c1.16,0.9 2.51,1.44 3.9,1.61V17.9c-0.87,-0.15 -1.71,-0.49 -2.46,-1.03L7.1,18.32zM13,4.07V1L8.45,5.55 13,10V6.09c2.84,0.48 5,2.94 5,5.91s-2.16,5.43 -5,5.91v2.02c3.95,-0.49 7,-3.85 7,-7.93s-3.05,-7.44 -7,-7.93z" />
+            </Button>
+            <Button Classes="tool" Command="{Binding RotateClockwiseCommand}" ToolTip.Tip="顺时针旋转 90°">
+              <PathIcon Width="17" Height="17"
+                        Data="M15.55,5.55L11,1v3.07C7.06,4.56 4,7.92 4,12s3.05,7.44 7,7.93v-2.02c-2.84,-0.48 -5,-2.94 -5,-5.91s2.16,-5.43 5,-5.91V10l4.55,-4.45zM19.93,11c-0.17,-1.39 -0.72,-2.73 -1.62,-3.89l-1.42,1.42c0.54,0.75 0.88,1.6 1.02,2.47h2.02zM13,17.9v2.02c1.39,-0.17 2.74,-0.71 3.9,-1.61l-1.44,-1.44c-0.75,0.54 -1.59,0.89 -2.46,1.03zM16.89,15.48l1.42,1.41c0.9,-1.16 1.45,-2.5 1.62,-3.89h-2.02c-0.14,0.87 -0.48,1.72 -1.02,2.48z" />
+            </Button>
+
+            <Rectangle Width="1" Height="18" Margin="6,0" Fill="{StaticResource LineBrush}" />
+
+            <Button Classes="tool" Command="{Binding ZoomOutCommand}" ToolTip.Tip="缩小" Content="−" FontSize="16" />
+            <Button Classes="tool" Command="{Binding ZoomActualCommand}" ToolTip.Tip="实际大小 (Ctrl+1)"
+                    Content="{Binding ZoomText}" FontSize="11" MinWidth="52" />
+            <Button Classes="tool" Command="{Binding ZoomInCommand}" ToolTip.Tip="放大" Content="+" FontSize="14" />
+            <Button Classes="tool" Command="{Binding FitToWindowCommand}" ToolTip.Tip="适应窗口 (Ctrl+0)" Content="适应" FontSize="11" />
+
+            <Rectangle Width="1" Height="18" Margin="6,0" Fill="{StaticResource LineBrush}" />
+
+            <TextBlock Text="{Binding FileName}" VerticalAlignment="Center" FontSize="12"
+                       Foreground="{StaticResource TextPrimary}" Margin="4,0,0,0"
+                       ToolTip.Tip="{Binding FilePathText}" />
+            <TextBlock Text="●" VerticalAlignment="Center" FontSize="9" Margin="4,0,0,0"
+                       Foreground="{StaticResource AccentBrush}" IsVisible="{Binding IsDirty}" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Border>
+
+    <!-- ============================ 底部：状态栏 ============================ -->
+    <Border DockPanel.Dock="Bottom" Height="26"
+            Background="#1A1A20"
+            BorderBrush="{StaticResource LineBrush}"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="12,0" VerticalAlignment="Center">
+        <TextBlock Grid.Column="0" Text="{Binding StatusText}" FontSize="11"
+                   Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" />
+        <TextBlock Grid.Column="1" Text="{Binding ImageSizeText}" FontSize="11"
+                   Foreground="{StaticResource TextMuted}" Margin="12,0" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="2" Text="{Binding ZoomText}" FontSize="11"
+                   Foreground="{StaticResource TextMuted}" Margin="0,0,12,0" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <Border Width="12" Height="12" CornerRadius="2" Background="{Binding SampleBrush}"
+                  BorderBrush="#55FFFFFF" BorderThickness="1" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding SampleText}" FontSize="11" Foreground="{StaticResource TextMuted}"
+                     VerticalAlignment="Center" MinWidth="58" />
+        </StackPanel>
+        <TextBlock Grid.Column="4" Text="{Binding CursorText}" FontSize="11" MinWidth="72"
+                   Foreground="{StaticResource TextMuted}" Margin="10,0,0,0" VerticalAlignment="Center"
+                   TextAlignment="Right" />
+      </Grid>
+    </Border>
+
+    <!-- ============================ 主体 ============================ -->
+    <Grid ColumnDefinitions="54,*,312">
+
+      <!-- 左侧工具条 -->
+      <Border Grid.Column="0" Background="{StaticResource PanelBg}"
+              BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+        <StackPanel Margin="0,10" Spacing="4" HorizontalAlignment="Center">
+          <Button Classes="rail" ToolTip.Tip="平移画布（拖动）" Click="OnPanToolClick">
+            <PathIcon Width="19" Height="19"
+                      Data="M13,24c-3.26,0 -6.19,-1.67 -7.91,-4.42l-4.11,-5.85c-0.31,-0.48 -0.21,-1.12 0.24,-1.48 0.47,-0.38 1.14,-0.34 1.57,0.08L5,13.86V4c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v6h1V2c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v8h1V3c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v7h1V5c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v10.5l2.7,-1.35c0.42,-0.21 0.93,-0.19 1.35,0.05 0.6,0.34 0.9,1.02 0.7,1.69l-1.4,4.66C19.29,22.33 16.35,24 13,24z" />
+          </Button>
+          <ToggleButton Classes="rail" ToolTip.Tip="裁剪" IsChecked="{Binding IsCropMode, Mode=TwoWay}">
+            <PathIcon Width="19" Height="19"
+                      Data="M17,15h2V7c0,-1.1 -0.9,-2 -2,-2H9v2h8v8zM7,17V1H5v4H1v2h4v10c0,1.1 0.9,2 2,2h10v4h2v-4h4v-2H7z" />
+          </ToggleButton>
+          <Rectangle Height="1" Width="22" Margin="0,6" Fill="{StaticResource LineBrush}" />
+          <ToggleButton Classes="rail subtle" ToolTip.Tip="棋盘格背景" IsChecked="{Binding ShowCheckerboard, Mode=TwoWay}">
+            <PathIcon Width="17" Height="17" Data="M3,3h8v8H3V3zM13,13h8v8h-8v-8z" />
+          </ToggleButton>
+        </StackPanel>
+      </Border>
+
+      <!-- 画布 -->
+      <Border Grid.Column="1" Background="#131317">
+        <controls:ImageCanvas x:Name="Canvas"
+                              Margin="0"
+                              Source="{Binding ImageSource}"
+                              Zoom="{Binding Zoom}"
+                              Offset="{Binding Offset}"
+                              ShowCheckerboard="{Binding ShowCheckerboard}"
+                              IsCropMode="{Binding IsCropMode}"
+                              CropRect="{Binding CropRect}" />
+      </Border>
+
+      <!-- 右侧面板 -->
+      <Border Grid.Column="2" Background="{StaticResource PanelBg}"
+              BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="14,10,14,18" Spacing="9">
+
+            <!-- 裁剪 -->
+            <Border IsVisible="{Binding IsCropMode}" Background="#243247" CornerRadius="8" Padding="12,10">
+              <StackPanel Spacing="8">
+                <TextBlock Text="裁剪区域" Classes="section" Foreground="#B9CDFF" />
+                <TextBlock Text="{Binding CropText}" FontSize="13" Foreground="#FFFFFF" />
+                <Grid ColumnDefinitions="*,8,*">
+                  <Button Grid.Column="0" Classes="accent" Content="应用裁剪" Command="{Binding ApplyCropCommand}" />
+                  <Button Grid.Column="2" Classes="chip" Content="取消" Command="{Binding CancelCropCommand}" />
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <!-- 调整 -->
+            <TextBlock Text="色彩调整" Classes="section" />
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="亮度" Classes="label" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding Brightness, StringFormat={}{0:+0;-0;0}}" />
+              </Grid>
+              <Slider Minimum="-100" Maximum="100" Value="{Binding Brightness}" />
+            </StackPanel>
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="对比度" Classes="label" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding Contrast, StringFormat={}{0:+0;-0;0}}" />
+              </Grid>
+              <Slider Minimum="-100" Maximum="100" Value="{Binding Contrast}" />
+            </StackPanel>
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="饱和度" Classes="label" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding Saturation, StringFormat={}{0:+0;-0;0}}" />
+              </Grid>
+              <Slider Minimum="-100" Maximum="100" Value="{Binding Saturation}" />
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*,8,*">
+              <Button Grid.Column="0" Classes="accent" Content="应用调整"
+                      Command="{Binding ApplyAdjustmentCommand}" IsEnabled="{Binding HasAdjustment}" />
+              <Button Grid.Column="2" Classes="chip" Content="重置" Command="{Binding ResetAdjustmentCommand}" />
+            </Grid>
+
+            <Rectangle Height="1" Fill="{StaticResource LineBrush}" Margin="0,4" />
+
+            <!-- 滤镜 -->
+            <TextBlock Text="滤镜" Classes="section" />
+            <Grid ColumnDefinitions="*,6,*,6,*" RowDefinitions="Auto,6,Auto">
+              <Button Grid.Row="0" Grid.Column="0" Classes="chip" Content="灰度" Command="{Binding GrayscaleCommand}" />
+              <Button Grid.Row="0" Grid.Column="2" Classes="chip" Content="反色" Command="{Binding InvertCommand}" />
+              <Button Grid.Row="0" Grid.Column="4" Classes="chip" Content="棕褐色" Command="{Binding SepiaCommand}" />
+              <Button Grid.Row="2" Grid.Column="0" Classes="chip" Content="模糊" Command="{Binding BlurCommand}" />
+              <Button Grid.Row="2" Grid.Column="2" Classes="chip" Content="锐化" Command="{Binding SharpenCommand}" />
+              <Button Grid.Row="2" Grid.Column="4" Classes="chip" Content="边缘" Command="{Binding EdgesCommand}" />
+            </Grid>
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="模糊半径" Classes="value" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding BlurRadius, StringFormat={}{0:0.0} px}" />
+              </Grid>
+              <Slider Minimum="0.5" Maximum="20" Value="{Binding BlurRadius}" />
+            </StackPanel>
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="锐化强度" Classes="value" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding SharpenAmount, StringFormat={}{0:0.0}}" />
+              </Grid>
+              <Slider Minimum="0.2" Maximum="4" Value="{Binding SharpenAmount}" />
+            </StackPanel>
+
+            <Rectangle Height="1" Fill="{StaticResource LineBrush}" Margin="0,4" />
+
+            <!-- 变换 -->
+            <TextBlock Text="变换" Classes="section" />
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="旋转角度" Classes="label" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding RotateAngle, StringFormat={}{0:0}°}" />
+              </Grid>
+              <Slider Minimum="0" Maximum="180" Value="{Binding RotateAngle}" />
+            </StackPanel>
+            <Grid ColumnDefinitions="*,8,*">
+              <Button Grid.Column="0" Classes="chip" Content="按角度旋转"
+                      Command="{Binding RotateByAngleCommand}" />
+              <Button Grid.Column="2" Classes="chip" Content="旋转 180°"
+                      Command="{Binding Rotate180Command}" />
+            </Grid>
+            <Grid ColumnDefinitions="*,8,*">
+              <Button Grid.Column="0" Classes="chip" Content="水平翻转"
+                      Command="{Binding FlipHorizontalCommand}" />
+              <Button Grid.Column="2" Classes="chip" Content="垂直翻转"
+                      Command="{Binding FlipVerticalCommand}" />
+            </Grid>
+            <Button Classes="chip" Content="调整图像大小…" Command="{Binding ResizeImageCommand}" />
+
+            <Rectangle Height="1" Fill="{StaticResource LineBrush}" Margin="0,4" />
+
+            <!-- 导出 -->
+            <TextBlock Text="导出质量" Classes="section" />
+            <StackPanel Spacing="2">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="JPEG / WEBP" Classes="value" />
+                <TextBlock Grid.Column="1" Classes="value"
+                           Text="{Binding JpegQuality, StringFormat={}{0:0}}" />
+              </Grid>
+              <Slider Minimum="10" Maximum="100" Value="{Binding JpegQuality}" />
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>
