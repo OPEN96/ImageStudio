@@ -60,6 +60,48 @@ public sealed class MoveEventArgs(Point position, KeyModifiers modifiers) : Even
     public KeyModifiers Modifiers { get; } = modifiers;
 }
 
+/// <summary>自由变换框：四角为图像像素坐标，顺序为 左上 / 右上 / 右下 / 左下。</summary>
+public sealed class TransformBox(Point topLeft, Point topRight, Point bottomRight, Point bottomLeft)
+{
+    public Point TopLeft { get; } = topLeft;
+
+    public Point TopRight { get; } = topRight;
+
+    public Point BottomRight { get; } = bottomRight;
+
+    public Point BottomLeft { get; } = bottomLeft;
+
+    public Point[] Corners => [TopLeft, TopRight, BottomRight, BottomLeft];
+
+    public Point TopMid => Midpoint(TopLeft, TopRight);
+
+    public Point RightMid => Midpoint(TopRight, BottomRight);
+
+    public Point BottomMid => Midpoint(BottomRight, BottomLeft);
+
+    public Point LeftMid => Midpoint(BottomLeft, TopLeft);
+
+    /// <summary>四条边的中点，顺序与角点一致（上右下左）。</summary>
+    public Point[] EdgeMids => [TopMid, RightMid, BottomMid, LeftMid];
+
+    public Point Center => new(
+        (TopLeft.X + TopRight.X + BottomRight.X + BottomLeft.X) / 4,
+        (TopLeft.Y + TopRight.Y + BottomRight.Y + BottomLeft.Y) / 4);
+
+    private static Point Midpoint(Point a, Point b) => new((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+}
+
+/// <summary>变换框上的拖动事件（位置为图像像素坐标，未做画布钳制）。</summary>
+public sealed class TransformDragEventArgs(TransformHandle handle, Point position, KeyModifiers modifiers)
+    : EventArgs
+{
+    public TransformHandle Handle { get; } = handle;
+
+    public Point Position { get; } = position;
+
+    public KeyModifiers Modifiers { get; } = modifiers;
+}
+
 /// <summary>绘制类工具的落点（图像像素坐标，可能略超出画布）。</summary>
 public sealed class PaintEventArgs(Point position) : EventArgs
 {
@@ -112,6 +154,10 @@ public class ImageCanvas : Control
     public static readonly StyledProperty<double> BrushSizeProperty =
         AvaloniaProperty.Register<ImageCanvas, double>(nameof(BrushSize), 24);
 
+    /// <summary>非空时进入自由变换状态：画出变换框并拦截指针交互。</summary>
+    public static readonly StyledProperty<TransformBox?> TransformProperty =
+        AvaloniaProperty.Register<ImageCanvas, TransformBox?>(nameof(Transform));
+
     /// <summary>
     /// 位图内容版本号。复用同一张位图刷新像素时，<see cref="Source"/> 引用不变，
     /// 靠这个计数器触发重绘。
@@ -138,9 +184,30 @@ public class ImageCanvas : Control
     private static readonly IPen GradientPen = new Pen(Brushes.White, 1.3, new DashStyle([5, 4], 0));
     private static readonly IPen GradientUnderPen = new Pen(new SolidColorBrush(Color.Parse("#101014")), 2.6);
 
+    private static readonly IPen TransformPen = new Pen(new SolidColorBrush(Color.Parse("#6EA8FF")), 1.2);
+    private static readonly IPen TransformUnderPen = new Pen(new SolidColorBrush(Color.Parse("#0B0B0E")), 2.8);
+
+    private static readonly TransformHandle[] CornerHandles =
+        [TransformHandle.TopLeft, TransformHandle.TopRight, TransformHandle.BottomRight, TransformHandle.BottomLeft];
+
+    private static readonly TransformHandle[] EdgeHandles =
+        [TransformHandle.Top, TransformHandle.Right, TransformHandle.Bottom, TransformHandle.Left];
+
+    private static readonly TransformHandle[] RotateHandles =
+    [
+        TransformHandle.RotateTopLeft, TransformHandle.RotateTopRight,
+        TransformHandle.RotateBottomRight, TransformHandle.RotateBottomLeft
+    ];
+
     private static readonly Cursor CrossCursor = new(StandardCursorType.Cross);
     private static readonly Cursor MoveCursor = new(StandardCursorType.SizeAll);
+    private static readonly Cursor ArrowCursor = new(StandardCursorType.Arrow);
     private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
+    private static readonly Cursor NorthWestCursor = new(StandardCursorType.TopLeftCorner);
+    private static readonly Cursor NorthEastCursor = new(StandardCursorType.TopRightCorner);
+    private static readonly Cursor NorthSouthCursor = new(StandardCursorType.TopSide);
+    private static readonly Cursor WestEastCursor = new(StandardCursorType.LeftSide);
+    private static readonly Cursor RotateCursor = new(StandardCursorType.Hand);
 
     private static ImageBrush? _checkerBrush;
 
@@ -161,6 +228,8 @@ public class ImageCanvas : Control
     private Point? _hover;
     private bool _isGradientDragging;
     private bool _isMoving;
+    private bool _isTransformDragging;
+    private TransformHandle _transformHandle;
     private Point _gradientStart;
     private Point _gradientCurrent;
 
@@ -172,7 +241,7 @@ public class ImageCanvas : Control
         AffectsRender<ImageCanvas>(
             SourceProperty, ZoomProperty, OffsetProperty, ShowCheckerboardProperty,
             ToolProperty, CropRectProperty, SelectionProperty, ShowSelectionProperty,
-            BrushSizeProperty, SourceVersionProperty);
+            BrushSizeProperty, SourceVersionProperty, TransformProperty);
         FocusableProperty.OverrideDefaultValue<ImageCanvas>(true);
         ClipToBoundsProperty.OverrideDefaultValue<ImageCanvas>(true);
     }
@@ -237,6 +306,12 @@ public class ImageCanvas : Control
         set => SetValue(ShowSelectionProperty, value);
     }
 
+    public TransformBox? Transform
+    {
+        get => GetValue(TransformProperty);
+        set => SetValue(TransformProperty, value);
+    }
+
     /// <summary>画笔直径（图像像素），用于绘制圆形光标。</summary>
     public double BrushSize
     {
@@ -284,6 +359,15 @@ public class ImageCanvas : Control
 
     /// <summary>移动工具抬起，需要提交结果。</summary>
     public event EventHandler? MoveEnded;
+
+    /// <summary>变换框上开始拖动某个操作点。</summary>
+    public event EventHandler<TransformDragEventArgs>? TransformDragStarted;
+
+    /// <summary>变换框拖动中。</summary>
+    public event EventHandler<TransformDragEventArgs>? TransformDragMoved;
+
+    /// <summary>变换框拖动结束（松开鼠标）。</summary>
+    public event EventHandler? TransformDragEnded;
 
     // ------------------------------------------------------------------ 尺寸换算
 
@@ -344,6 +428,7 @@ public class ImageCanvas : Control
         DrawSelectionDragPreview(context);
         DrawGradientPreview(context);
         DrawBrushCursor(context);
+        DrawTransformBox(context);
     }
 
     /// <summary>画笔直径的圆形光标，缩放时跟随缩放。</summary>
@@ -660,12 +745,7 @@ public class ImageCanvas : Control
 
         if (change.Property == ToolProperty)
         {
-            Cursor = Tool switch
-            {
-                CanvasTool.Pan => MoveCursor,
-                CanvasTool.Text => TextCursor,
-                _ => CrossCursor
-            };
+            UpdateToolCursor();
 
             if (Tool != CanvasTool.Crop)
                 _isCropping = false;
@@ -682,6 +762,14 @@ public class ImageCanvas : Control
             _lassoPoints = null;
             _isGradientDragging = false;
             _hover = null;
+            InvalidateVisual();
+        }
+        else if (change.Property == TransformProperty)
+        {
+            _isTransformDragging = false;
+            _transformHandle = TransformHandle.None;
+            if (Transform is null)
+                UpdateToolCursor();
             InvalidateVisual();
         }
         else if (change.Property == SelectionProperty || change.Property == ShowSelectionProperty)
@@ -705,14 +793,33 @@ public class ImageCanvas : Control
         var position = point.Position;
 
         if (point.Properties.IsMiddleButtonPressed ||
-            (point.Properties.IsLeftButtonPressed && Tool == CanvasTool.Pan))
+            (point.Properties.IsLeftButtonPressed && Transform is null && Tool == CanvasTool.Pan))
         {
             _isPanning = true;
             _lastPointer = position;
         }
         else if (point.Properties.IsLeftButtonPressed)
         {
-            BeginDrag(position, e.KeyModifiers);
+            // 变换状态是模态的：所有左键操作都先交给变换框
+            if (Transform is not null)
+            {
+                var handle = HitTestTransform(position);
+                if (handle != TransformHandle.None)
+                {
+                    _isTransformDragging = true;
+                    _transformHandle = handle;
+                    TransformDragStarted?.Invoke(this,
+                        new TransformDragEventArgs(handle, ToImage(position), e.KeyModifiers));
+
+                    e.Pointer.Capture(this);
+                    e.Handled = true;
+                    return;
+                }
+            }
+            else
+            {
+                BeginDrag(position, e.KeyModifiers);
+            }
         }
 
         e.Pointer.Capture(this);
@@ -925,9 +1032,17 @@ public class ImageCanvas : Control
             Offset += position - _lastPointer;
             _lastPointer = position;
         }
+        else if (_isTransformDragging)
+        {
+            TransformDragMoved?.Invoke(this,
+                new TransformDragEventArgs(_transformHandle, ToImage(position), e.KeyModifiers));
+        }
         else
         {
             UpdateDrag(position, e.KeyModifiers);
+
+            if (Transform is not null)
+                UpdateTransformCursor(HitTestTransform(position));
         }
 
         if (IsPaintTool && !_isPainting)
@@ -942,6 +1057,130 @@ public class ImageCanvas : Control
                      imagePoint.X < size.Width && imagePoint.Y < size.Height;
 
         PointerImageMoved?.Invoke(this, new CanvasPointerEventArgs(imagePoint, inside));
+    }
+
+    // ------------------------------------------------------------------ 自由变换框
+
+    private void UpdateToolCursor()
+    {
+        Cursor = Tool switch
+        {
+            CanvasTool.Pan or CanvasTool.Move => MoveCursor,
+            CanvasTool.Text => TextCursor,
+            _ => CrossCursor
+        };
+    }
+
+    /// <summary>按变换框上的操作点切换光标，让“能拖什么”一眼可见。</summary>
+    private void UpdateTransformCursor(TransformHandle handle)
+    {
+        Cursor = handle switch
+        {
+            TransformHandle.None => ArrowCursor,
+            TransformHandle.Move => MoveCursor,
+            TransformHandle.TopLeft or TransformHandle.BottomRight => NorthWestCursor,
+            TransformHandle.TopRight or TransformHandle.BottomLeft => NorthEastCursor,
+            TransformHandle.Top or TransformHandle.Bottom => NorthSouthCursor,
+            TransformHandle.Left or TransformHandle.Right => WestEastCursor,
+            _ => RotateCursor
+        };
+    }
+
+    /// <summary>变换框命中的操作点（屏幕空间容差，角点优先于边中点，角外侧为旋转区）。</summary>
+    private TransformHandle HitTestTransform(Point screen)
+    {
+        if (Transform is not { } box)
+            return TransformHandle.None;
+
+        const double handleRadius = 7.5;
+        const double rotateRadius = 26;
+
+        var corners = box.Corners;
+
+        for (var i = 0; i < corners.Length; i++)
+        {
+            if (Distance(ToScreen(corners[i]), screen) <= handleRadius)
+                return CornerHandles[i];
+        }
+
+        var mids = box.EdgeMids;
+
+        for (var i = 0; i < mids.Length; i++)
+        {
+            if (Distance(ToScreen(mids[i]), screen) <= handleRadius)
+                return EdgeHandles[i];
+        }
+
+        for (var i = 0; i < corners.Length; i++)
+        {
+            if (Distance(ToScreen(corners[i]), screen) <= rotateRadius)
+                return RotateHandles[i];
+        }
+
+        return IsInsideQuad(screen, corners) ? TransformHandle.Move : TransformHandle.None;
+    }
+
+    private bool IsInsideQuad(Point screen, Point[] imageCorners)
+    {
+        var inside = false;
+
+        for (int i = 0, j = imageCorners.Length - 1; i < imageCorners.Length; j = i++)
+        {
+            var a = ToScreen(imageCorners[i]);
+            var b = ToScreen(imageCorners[j]);
+
+            if (a.Y > screen.Y == b.Y > screen.Y)
+                continue;
+
+            var crossX = (b.X - a.X) * (screen.Y - a.Y) / (b.Y - a.Y) + a.X;
+            if (screen.X < crossX)
+                inside = !inside;
+        }
+
+        return inside;
+    }
+
+    private void DrawTransformBox(DrawingContext context)
+    {
+        if (Transform is not { } box)
+            return;
+
+        var corners = box.Corners;
+        var screen = new Point[corners.Length];
+
+        for (var i = 0; i < corners.Length; i++)
+            screen[i] = ToScreen(corners[i]);
+
+        var geometry = new StreamGeometry();
+
+        using (var ctx = geometry.Open())
+        {
+            ctx.BeginFigure(screen[0], isFilled: false);
+            for (var i = 1; i < screen.Length; i++)
+                ctx.LineTo(screen[i]);
+            ctx.EndFigure(true);
+        }
+
+        context.DrawGeometry(null, TransformUnderPen, geometry);
+        context.DrawGeometry(null, TransformPen, geometry);
+
+        foreach (var point in screen)
+            DrawSquareHandle(context, point);
+
+        foreach (var mid in box.EdgeMids)
+            DrawSquareHandle(context, ToScreen(mid));
+
+        var center = ToScreen(box.Center);
+        context.DrawEllipse(null, TransformUnderPen, center, 3, 3);
+        context.DrawEllipse(null, TransformPen, center, 3, 3);
+    }
+
+    private static void DrawSquareHandle(DrawingContext context, Point point)
+    {
+        const double size = 7;
+        var rect = new Rect(point.X - size / 2, point.Y - size / 2, size, size);
+        context.FillRectangle(HandleFill, rect);
+        context.DrawRectangle(null, HandlePen, rect);
     }
 
     private Point ClampToScreen(Point screen)
@@ -963,7 +1202,12 @@ public class ImageCanvas : Control
     {
         base.OnPointerReleased(e);
 
-        if (_isPanning)
+        if (_isTransformDragging)
+        {
+            _isTransformDragging = false;
+            TransformDragEnded?.Invoke(this, EventArgs.Empty);
+        }
+        else if (_isPanning)
         {
             _isPanning = false;
         }

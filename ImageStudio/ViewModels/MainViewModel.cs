@@ -253,6 +253,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void SetDocument(ImageDocument document, bool fit)
     {
+        if (IsTransforming)
+            EndTransformSession();
+
         if (_document is not null)
         {
             _document.Changed -= OnDocumentChanged;
@@ -992,6 +995,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         SaveCommand.NotifyCanExecuteChanged();
         ApplyAdjustmentCommand.NotifyCanExecuteChanged();
         AddTextCommand.NotifyCanExecuteChanged();
+        CommitTransformCommand.NotifyCanExecuteChanged();
+        CancelTransformCommand.NotifyCanExecuteChanged();
+        ResetTransformCommand.NotifyCanExecuteChanged();
         NotifyLayerCommands();
         NotifySelectionCommands();
         OnPropertyChanged(nameof(HasDocument));
@@ -1005,6 +1011,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _stroke = null;
         _previewBitmap?.Dispose();
         _previewBitmap = null;
+        ReleaseTransformBuffers();
         if (_document is not null)
             _document.Changed -= OnDocumentChanged;
         _document?.Dispose();

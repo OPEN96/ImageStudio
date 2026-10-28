@@ -293,6 +293,25 @@ public sealed class ImageDocument : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// 按自由变换的几何参数重采样某个图层（有选区时只变换选区内的像素）。
+    /// 与原样一致时不产生历史记录，返回 false。
+    /// </summary>
+    public bool TransformLayerContent(int index, in TransformGeometry geometry, Selection? clip, string label)
+    {
+        var layer = LayerAt(index);
+        if (layer is null || geometry.IsIdentity)
+            return false;
+
+        using var _ = BeginEdit(label);
+
+        layer.ReplacePixels(TransformOps.Warp(layer.Pixels, geometry, clip));
+        if (layer.Mask is { } mask)
+            layer.ReplaceMask(TransformOps.WarpMask(mask, geometry, clip));
+
+        return true;
+    }
+
     public void DeleteLayer(int index)
     {
         if (_layers.Count <= 1)

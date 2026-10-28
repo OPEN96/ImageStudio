@@ -63,6 +63,11 @@
           <MenuItem Header="编辑(_E)">
             <MenuItem Header="撤销" Command="{Binding UndoCommand}" />
             <MenuItem Header="重做" Command="{Binding RedoCommand}" />
+            <Separator />
+            <MenuItem Header="自由变换" Command="{Binding BeginTransformCommand}" InputGesture="Ctrl+T" />
+            <MenuItem Header="应用变换" Command="{Binding CommitTransformCommand}" InputGesture="Enter" />
+            <MenuItem Header="重置变换" Command="{Binding ResetTransformCommand}" />
+            <MenuItem Header="取消变换" Command="{Binding CancelTransformCommand}" InputGesture="Escape" />
           </MenuItem>
           <MenuItem Header="图像(_I)">
             <MenuItem Header="裁剪" Command="{Binding BeginCropCommand}" />
@@ -127,6 +132,7 @@
             <MenuItem Header="绘画：B 画笔 / E 橡皮 / P 油漆桶 / G 渐变 / T 文字" IsEnabled="False" />
             <MenuItem Header="笔刷：[ ] 缩放大小 · X 交换前景 / 背景 · 纯色填充即油漆桶" IsEnabled="False" />
             <MenuItem Header="移动：V 移动工具 / 方向键微调 1px（Shift 为 10px）" IsEnabled="False" />
+            <MenuItem Header="变换：Ctrl+T 自由变换 / Enter 应用 / Esc 取消" IsEnabled="False" />
             <MenuItem Header="滚轮缩放 · 左键拖动平移 · 选区工具下拖动即框选" IsEnabled="False" />
           </MenuItem>
         </Menu>
@@ -252,6 +258,11 @@
             <PathIcon Width="19" Height="19"
                       Data="M17,15h2V7c0,-1.1 -0.9,-2 -2,-2H9v2h8v8zM7,17V1H5v4H1v2h4v10c0,1.1 0.9,2 2,2h10v4h2v-4h4v-2H7z" />
           </ToggleButton>
+          <ToggleButton Classes="rail" ToolTip.Tip="自由变换 (Ctrl+T)" IsChecked="{Binding IsTransforming, Mode=OneWay}"
+                        Click="OnTransformToolClick">
+            <PathIcon Width="18" Height="18"
+                      Data="M19,12h-2v3h-3v2h5V12zM7,12H5v5h5v-2H7V12zM19,5h-5v2h3v3h2V5zM7,7V5h3V3H5v5h2V7z" />
+          </ToggleButton>
 
           <Rectangle Height="1" Width="22" Margin="0,6" Fill="{StaticResource LineBrush}" />
 
@@ -322,7 +333,8 @@
                               ShowCheckerboard="{Binding ShowCheckerboard}"
                               Tool="{Binding ActiveTool}"
                               CropRect="{Binding CropRect}"
-                              Selection="{Binding CurrentSelection}" />
+                              Selection="{Binding CurrentSelection}"
+                              Transform="{Binding TransformQuad}" />
       </Border>
 
       <!-- 右侧面板 -->
@@ -444,6 +456,45 @@
                   <Grid ColumnDefinitions="*,8,*">
                     <Button Grid.Column="0" Classes="accent" Content="应用裁剪" Command="{Binding ApplyCropCommand}" />
                     <Button Grid.Column="2" Classes="chip" Content="取消" Command="{Binding CancelCropCommand}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
+
+              <!-- 自由变换 -->
+              <Border IsVisible="{Binding IsTransforming}" Background="#243247" CornerRadius="8" Padding="12,10">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="自由变换" Classes="section" Foreground="#B9CDFF" />
+                    <TextBlock Grid.Column="1" Text="Ctrl+T" Classes="value" Foreground="#8FA6C8" />
+                  </Grid>
+                  <TextBlock Text="{Binding TransformHint}" Classes="hint" Foreground="#C6D2EA" TextWrapping="Wrap" />
+                  <StackPanel Spacing="2">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="角度" Classes="label" />
+                      <TextBlock Grid.Column="1" Classes="value" Text="{Binding TransformAngleText}" />
+                    </Grid>
+                    <Slider Minimum="-180" Maximum="180" Value="{Binding TransformAngle, Mode=TwoWay}" />
+                  </StackPanel>
+                  <StackPanel Spacing="2">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="水平缩放" Classes="label" />
+                      <TextBlock Grid.Column="1" Classes="value" Text="{Binding TransformScaleXText}" />
+                    </Grid>
+                    <Slider Minimum="1" Maximum="400" Value="{Binding TransformScaleXPercent, Mode=TwoWay}" />
+                  </StackPanel>
+                  <StackPanel Spacing="2">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="垂直缩放" Classes="label" />
+                      <TextBlock Grid.Column="1" Classes="value" Text="{Binding TransformScaleYText}" />
+                    </Grid>
+                    <Slider Minimum="1" Maximum="400" Value="{Binding TransformScaleYPercent, Mode=TwoWay}" />
+                  </StackPanel>
+                  <CheckBox Content="保持比例" FontSize="11" MinHeight="24"
+                            IsChecked="{Binding TransformKeepAspect, Mode=TwoWay}" />
+                  <Grid ColumnDefinitions="*,6,Auto,6,Auto">
+                    <Button Grid.Column="0" Classes="accent" Content="应用" Command="{Binding CommitTransformCommand}" />
+                    <Button Grid.Column="2" Classes="chip" Content="重置" Command="{Binding ResetTransformCommand}" />
+                    <Button Grid.Column="4" Classes="chip" Content="取消" Command="{Binding CancelTransformCommand}" />
                   </Grid>
                 </StackPanel>
               </Border>

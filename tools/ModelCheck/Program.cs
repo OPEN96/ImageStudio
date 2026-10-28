@@ -1,3 +1,4 @@
+using System.Numerics;
 using ImageStudio.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -751,6 +752,170 @@ using (var sparse = SparseImage(4, 4, (1, 0, (byte)128)))
     Check("整层平移是覆盖语义", MoveOps.Translate(sparse, 1, 0)[2, 0].A == 128);
 }
 
+// ---------------------------------------------------------------- 自由变换
+Console.WriteLine("\n[自由变换]");
+
+// 8x8 画布，左上放一个 2x2 白块作为可追踪的标记
+var baseGeometry = TransformGeometry.ForBounds(0, 0, 8, 8);
+Check("初始几何为原样", baseGeometry.IsIdentity && baseGeometry.CenterX == 4 && baseGeometry.CenterY == 4,
+    $"{baseGeometry.CenterX},{baseGeometry.CenterY}");
+
+using (var canvas = BlockImage(8, 8, new Rectangle(2, 2, 2, 2)))
+using (var same = TransformOps.Warp(canvas, baseGeometry))
+{
+    Check("恒等变换保持像素", same[2, 2].A == 255 && same[3, 3].A == 255 && same[0, 0].A == 0);
+    Check("恒等变换后包围盒不变", TransformOps.ContentBounds(same) == new Rectangle(2, 2, 2, 2),
+        TransformOps.ContentBounds(same).ToString());
+}
+
+using (var canvas = BlockImage(8, 8, new Rectangle(2, 2, 2, 2)))
+{
+    var moved = TransformMath.Translate(baseGeometry, new Vector2(2, 0));
+    using var warped = TransformOps.Warp(canvas, moved);
+    Check("平移后内容到位", warped[4, 2].A == 255 && warped[5, 3].A == 255);
+    Check("平移后原位清空", warped[2, 2].A == 0 && warped[3, 3].A == 0);
+}
+
+using (var canvas = BlockImage(8, 8, new Rectangle(2, 2, 2, 2)))
+{
+    var scaled = baseGeometry;
+    scaled.ScaleX = 2;
+    scaled.ScaleY = 2;
+    using var warped = TransformOps.Warp(canvas, scaled);
+    var grown = TransformOps.ContentBounds(warped);
+    Check("放大 2 倍后覆盖更大区域", warped[1, 1].A == 255 && grown.Width >= 4 && grown.Height >= 4,
+        $"{warped[1, 1].A}/{grown}");
+    Check("放大后区域之外仍透明", warped[6, 6].A == 0 && warped[7, 7].A == 0,
+        $"{warped[6, 6].A}/{warped[7, 7].A}");
+}
+
+using (var canvas = BlockImage(8, 8, new Rectangle(2, 2, 2, 2)))
+{
+    var quarterTurn = baseGeometry;
+    quarterTurn.Rotation = Math.PI / 2;
+    using var warped = TransformOps.Warp(canvas, quarterTurn);
+    Check("旋转 90° 后位置正确", warped[4, 2].A == 255 && warped[5, 3].A == 255,
+        $"{warped[4, 2].A}/{warped[5, 3].A}");
+    Check("旋转后原位清空", warped[2, 2].A == 0);
+}
+
+using (var canvas = BlockImage(8, 8, new Rectangle(2, 2, 2, 2)))
+{
+    var halfTurn = baseGeometry;
+    halfTurn.Rotation = Math.PI;
+    using var warped = TransformOps.Warp(canvas, halfTurn);
+    Check("旋转 180° 后关于中心对称", warped[4, 4].A == 255 && warped[5, 5].A == 255 && warped[2, 2].A == 0,
+        $"{warped[4, 4].A}/{warped[5, 5].A}/{warped[2, 2].A}");
+}
+
+// 单个白点放大后，所有非零 alpha 的像素都应该仍是纯白（预乘采样，无黑边）
+using (var dot = SparseImage(16, 16, (8, 8, (byte)255)))
+{
+    var scaled = TransformGeometry.ForBounds(0, 0, 16, 16);
+    scaled.ScaleX = 3;
+    scaled.ScaleY = 3;
+    using var warped = TransformOps.Warp(dot, scaled);
+
+    var dark = false;
+    var partial = false;
+
+    for (var y = 0; y < warped.Height; y++)
+    for (var x = 0; x < warped.Width; x++)
+    {
+        var pixel = warped[x, y];
+        if (pixel.A == 0)
+            continue;
+        if (pixel.R != 255 || pixel.G != 255 || pixel.B != 255)
+            dark = true;
+        if (pixel.A < 250)
+            partial = true;
+    }
+
+    Check("双线性缩放不产生暗边", !dark);
+    Check("缩放边缘有半透明过渡", partial);
+}
+
+// 选区裁剪：只搬运选区内像素，选区外保持原样
+using (var canvas = BlockImage(10, 10, new Rectangle(0, 0, 4, 4)))
+{
+    canvas[9, 9] = new Bgra32 { R = 200, G = 0, B = 0, A = 255 };
+    var clip = Selection.FromRect(10, 10, new Rectangle(0, 0, 4, 4));
+    using var warped = TransformOps.Warp(canvas, TransformMath.Translate(TransformGeometry.ForBounds(0, 0, 4, 4), new Vector2(5, 0)), clip);
+
+    Check("选区内内容变换到新位置", warped[5, 0].A == 255 && warped[8, 3].A == 255);
+    Check("选区原位清空", warped[0, 0].A == 0 && warped[3, 3].A == 0);
+    Check("选区外像素不受影响", warped[9, 9].A == 255 && warped[9, 9].R == 200);
+}
+
+// 蒙版跟随内容
+using (var transformDoc = new ImageDocument(BlockImage(10, 10, new Rectangle(0, 0, 4, 4))))
+{
+    var layer = transformDoc.ActiveLayer!;
+    var mask = Layer.CreateMask(10, 10, 0);
+    mask[1, 1] = new L8(180);
+    layer.Mask = mask;
+
+    var geometry = TransformMath.Translate(TransformGeometry.ForBounds(0, 0, 4, 4), new Vector2(5, 0));
+    var done = transformDoc.TransformLayerContent(0, geometry, null, "自由变换");
+
+    Check("文档变换返回成功", done);
+    Check("变换后像素到位", layer.Pixels[5, 1].A == 255 && layer.Pixels[1, 1].A == 0);
+    Check("蒙版跟随内容变换", layer.Mask![6, 1].PackedValue >= 175 && layer.Mask[1, 1].PackedValue == 0,
+        $"{layer.Mask[6, 1].PackedValue}/{layer.Mask[1, 1].PackedValue}");
+    Check("变换产生一条历史记录", transformDoc.CanUndo);
+
+    transformDoc.Undo();
+    var restored = transformDoc.ActiveLayer!;
+    Check("撤销后内容复原", restored.Pixels[1, 1].A == 255 && restored.Pixels[5, 1].A == 0);
+
+    Check("恒等变换不产生历史", !transformDoc.TransformLayerContent(0, TransformGeometry.ForBounds(0, 0, 4, 4), null, "自由变换"));
+}
+
+// 拖拽换算
+Check("拖动角点到对角点等于不变", SameGeometry(
+    TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(0, 0), false, false),
+    baseGeometry));
+
+var halfScale = TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(4, 4), false, false);
+Check("把角点拖到中心得到 50%", Math.Abs(halfScale.ScaleX - 0.5) < 1e-6 && Math.Abs(halfScale.ScaleY - 0.5) < 1e-6,
+    $"{halfScale.ScaleX:0.###}/{halfScale.ScaleY:0.###}");
+Check("对角点保持不动", Math.Abs(halfScale.CenterX - 6) < 1e-6 && Math.Abs(halfScale.CenterY - 6) < 1e-6,
+    $"{halfScale.CenterX}/{halfScale.CenterY}");
+
+var uniform = TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(0, 5), true, false);
+Check("Shift 等比缩放", Math.Abs(uniform.ScaleX - uniform.ScaleY) < 1e-6 && Math.Abs(uniform.ScaleX - 1) < 1e-6,
+    $"{uniform.ScaleX:0.###}/{uniform.ScaleY:0.###}");
+
+var fromCenter = TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(2, 2), false, true);
+Check("Alt 围绕中心缩放不移动中心", Math.Abs(fromCenter.CenterX - 4) < 1e-6 && Math.Abs(fromCenter.CenterY - 4) < 1e-6,
+    $"{fromCenter.CenterX}/{fromCenter.CenterY}");
+Check("Alt 围绕中心缩放尺寸减半", Math.Abs(fromCenter.ScaleX - 0.5) < 1e-6, fromCenter.ScaleX.ToString("0.###"));
+
+var edge = TransformMath.Resize(baseGeometry, TransformHandle.Right, new Vector2(16, 0), false, false);
+Check("拖右边中点只改变宽度", Math.Abs(edge.ScaleX - 2) < 1e-6 && Math.Abs(edge.ScaleY - 1) < 1e-6,
+    $"{edge.ScaleX:0.###}/{edge.ScaleY:0.###}");
+
+var collapsed = TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(10, 10), false, false);
+Check("拖成零面积时夹到最小尺寸",
+    Math.Abs(collapsed.ScaleX) > 0 && Math.Abs(collapsed.ScaleX * collapsed.HalfWidth) >= TransformGeometry.MinExtent - 1e-9,
+    collapsed.ScaleX.ToString("0.####"));
+
+var flipped = TransformMath.Resize(baseGeometry, TransformHandle.TopLeft, new Vector2(14, 14), false, false);
+Check("拖过锚点得到镜像（负缩放）", flipped.ScaleX < 0 && flipped.ScaleY < 0, $"{flipped.ScaleX:0.###}");
+
+var rotatedGeometry = TransformMath.RotateTo(baseGeometry, new Vector2(8, 4), new Vector2(4, 8), false);
+Check("拖动旋转 90°", Math.Abs(rotatedGeometry.Rotation - Math.PI / 2) < 1e-6, rotatedGeometry.Rotation.ToString("0.####"));
+
+var snapped = TransformMath.RotateTo(baseGeometry, new Vector2(8, 4),
+    new Vector2((float)(4 + 8 * Math.Cos(92 * Math.PI / 180)), (float)(4 + 8 * Math.Sin(92 * Math.PI / 180))), true);
+Check("Shift 旋转吸附到 15°", Math.Abs(snapped.Rotation - Math.PI / 2) < 1e-6, (snapped.Rotation * 180 / Math.PI).ToString("0.#"));
+
+Check("恒等判断不会把平移误判为无事发生",
+    !TransformMath.Translate(baseGeometry, new Vector2(1, 0)).IsIdentity);
+
+using (var blank = new Image<Bgra32>(8, 8))
+    Check("全透明图退回整幅画布", TransformOps.ContentBounds(blank) == new Rectangle(0, 0, 8, 8));
+
 Console.WriteLine($"\n结果: {passed} 通过, {failed} 失败");
 return failed == 0 ? 0 : 1;
 
@@ -764,6 +929,13 @@ static Image<Bgra32> SolidImage(int w, int h, byte r, byte g, byte b, byte a = 2
     });
     return img;
 }
+
+static bool SameGeometry(TransformGeometry a, TransformGeometry b) =>
+    Math.Abs(a.CenterX - b.CenterX) < 1e-6 &&
+    Math.Abs(a.CenterY - b.CenterY) < 1e-6 &&
+    Math.Abs(a.ScaleX - b.ScaleX) < 1e-6 &&
+    Math.Abs(a.ScaleY - b.ScaleY) < 1e-6 &&
+    Math.Abs(a.Rotation - b.Rotation) < 1e-6;
 
 static Image<Bgra32> BlockImage(int width, int height, Rectangle block)
 {

@@ -48,6 +48,10 @@ public partial class MainWindow : Window
             _viewModel.OnMoveUpdate(e.Position, e.Modifiers.HasFlag(KeyModifiers.Shift));
         Canvas.MoveEnded += (_, _) => _viewModel.OnMoveEnd();
 
+        Canvas.TransformDragStarted += (_, e) => _viewModel.OnTransformDragStart(e.Handle, e.Position);
+        Canvas.TransformDragMoved += (_, e) => _viewModel.OnTransformDragMove(e.Position, e.Modifiers);
+        Canvas.TransformDragEnded += (_, _) => _viewModel.OnTransformDragEnd();
+
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -81,6 +85,9 @@ public partial class MainWindow : Window
             base.OnClosing(e);
             return;
         }
+
+        // 未应用的变换不应参与保存流程
+        _viewModel.CancelTransformCommand.Execute(null);
 
         e.Cancel = true;
         base.OnClosing(e);
@@ -122,6 +129,15 @@ public partial class MainWindow : Window
 
     private void OnPanToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _viewModel.SetTool(CanvasTool.Pan);
+
+    /// <summary>自由变换按钮：未进入时开始，已在变换中则当作“应用”。</summary>
+    private void OnTransformToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_viewModel.IsTransforming)
+            _viewModel.CommitTransformCommand.Execute(null);
+        else
+            _viewModel.BeginTransformCommand.Execute(null);
+    }
 
     private void OnCropToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -216,6 +232,13 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            if (_viewModel.IsTransforming)
+            {
+                _viewModel.CancelTransformCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (_viewModel.IsCropMode)
             {
                 _viewModel.CancelCropCommand.Execute(null);
@@ -312,10 +335,21 @@ public partial class MainWindow : Window
             }
         }
 
+        if (e.Key == Key.Enter && _viewModel.IsTransforming)
+        {
+            _viewModel.CommitTransformCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         if (e.KeyModifiers == KeyModifiers.Control)
         {
             switch (e.Key)
             {
+                case Key.T:
+                    _viewModel.BeginTransformCommand.Execute(null);
+                    e.Handled = true;
+                    return;
                 case Key.A:
                     _viewModel.SelectAllCommand.Execute(null);
                     e.Handled = true;
