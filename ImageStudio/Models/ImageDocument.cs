@@ -16,16 +16,28 @@ public sealed class ImageDocument : IDisposable
     private readonly List<Snapshot> _redo = [];
     private readonly List<Layer> _layers = [];
 
+    /// <summary>
+    /// 历史面板用：每个元素是一个可回溯的状态，下标 0 最早。
+    /// labels[i] 表示“产生状态 i 的那一步操作名”，当前状态下标为 <see cref="_historyIndex"/>。
+    /// </summary>
+    private readonly List<string> _historyLabels;
+    private int _historyIndex;
+
+    /// <summary>保护历史栈与图层列表重建，避免后台缩略图任务与编辑主线程竞争。</summary>
+    private readonly object _historyLock = new();
+
     private Image<Bgra32>? _composite;
     private int _activeIndex;
     private int _editDepth;
 
-    public ImageDocument(Image<Bgra32> image, string? filePath = null)
+    public ImageDocument(Image<Bgra32> image, string? filePath = null, string initialLabel = "打开图像")
     {
         _layers.Add(new Layer("背景", image));
         Width = image.Width;
         Height = image.Height;
         FilePath = filePath;
+        _historyLabels = [initialLabel];
+        _historyIndex = 0;
     }
 
     public int Width { get; private set; }
@@ -54,9 +66,11 @@ public sealed class ImageDocument : IDisposable
 
     public bool CanRedo => _redo.Count > 0;
 
-    public string? UndoLabel => _undo.Count > 0 ? _undo[^1].Label : null;
+    public string? UndoLabel =>
+        _historyIndex > 0 && _historyIndex < _historyLabels.Count ? _historyLabels[_historyIndex] : null;
 
-    public string? RedoLabel => _redo.Count > 0 ? _redo[^1].Label : null;
+    public string? RedoLabel =>
+        _historyIndex >= 0 && _historyIndex < _historyLabels.Count - 1 ? _historyLabels[_historyIndex + 1] : null;
 
     /// <summary>像素或图层结构发生变化时触发（已在编辑作用域结束时合并）。</summary>
     public event EventHandler? Changed;
@@ -97,15 +111,19 @@ public sealed class ImageDocument : IDisposable
     /// </summary>
     public IDisposable BeginEdit(string label)
     {
-        if (_editDepth++ == 0)
+        lock (_historyLock)
         {
-            foreach (var entry in _redo)
-                entry.Dispose();
-            _redo.Clear();
+            if (_editDepth++ == 0)
+            {
+                // 在历史中间落笔时，后面的分支连同标签一起丢弃
+                DropRedoBranch();
 
-            _undo.Add(Capture(label));
-            TrimHistory();
-            IsDirty = true;
+                _undo.Add(Capture(label));
+                _historyLabels.Add(label);
+                _historyIndex = _historyLabels.Count - 1;
+                TrimHistory();
+                IsDirty = true;
+            }
         }
 
         return new EditScope(this);
@@ -142,36 +160,103 @@ public sealed class ImageDocument : IDisposable
 
     public void Undo()
     {
-        if (_undo.Count == 0)
-            return;
-
-        var entry = _undo[^1];
-        _undo.RemoveAt(_undo.Count - 1);
-        _redo.Add(Capture(entry.Label));
-
-        foreach (var layer in _layers)
-            layer.Dispose();
-        _layers.Clear();
-        _layers.AddRange(entry.Layers);
-        entry.ReleaseLayers();
-
-        Width = entry.Width;
-        Height = entry.Height;
-        ActiveIndex = entry.ActiveIndex;
-        IsDirty = true;
-        Invalidate();
-        Changed?.Invoke(this, EventArgs.Empty);
+        lock (_historyLock)
+        {
+            if (UndoStepCore())
+                NotifyStateChanged();
+        }
     }
 
     public void Redo()
     {
+        lock (_historyLock)
+        {
+            if (RedoStepCore())
+                NotifyStateChanged();
+        }
+    }
+
+    /// <summary>
+    /// 一次性跳转到任意历史状态，下标对应 <see cref="HistoryLabels"/>。
+    /// 连续执行 Undo / Redo 步骤，但只在最后触发一次界面刷新。
+    /// </summary>
+    public bool JumpToHistory(int target)
+    {
+        target = Math.Clamp(target, 0, _historyLabels.Count - 1);
+        if (target == _historyIndex)
+            return false;
+
+        lock (_historyLock)
+        {
+            if (target == _historyIndex)
+                return false;
+
+            var moved = false;
+            while (_historyIndex > target && UndoStepCore())
+                moved = true;
+            while (_historyIndex < target && RedoStepCore())
+                moved = true;
+
+            if (moved)
+                NotifyStateChanged();
+
+            return moved;
+        }
+    }
+
+    /// <summary>把当前画面导出为一张缩略图（不属于历史状态的当前状态用它补图）。</summary>
+    public Image<Bgra32> CurrentThumbnail(int maxSide = 40)
+    {
+        using var composite = Composite().Clone();
+        return BitmapFactory.ToThumbnailImage(composite, maxSide);
+    }
+
+    public void ClearHistory()
+    {
+        lock (_historyLock)
+        {
+            foreach (var entry in _undo)
+                entry.Dispose();
+            foreach (var entry in _redo)
+                entry.Dispose();
+            _undo.Clear();
+            _redo.Clear();
+            _historyLabels.RemoveRange(1, _historyLabels.Count - 1);
+            _historyIndex = 0;
+        }
+    }
+
+    /// <summary>历史面板可显示的状态总数。</summary>
+    public int HistoryCount => _historyLabels.Count;
+
+    private bool UndoStepCore()
+    {
+        if (_undo.Count == 0)
+            return false;
+
+        var entry = _undo[^1];
+        _undo.RemoveAt(_undo.Count - 1);
+        _redo.Add(Capture(_historyLabels[_historyIndex]));
+        Restore(entry);
+        _historyIndex--;
+        return true;
+    }
+
+    private bool RedoStepCore()
+    {
         if (_redo.Count == 0)
-            return;
+            return false;
 
         var entry = _redo[^1];
         _redo.RemoveAt(_redo.Count - 1);
-        _undo.Add(Capture(entry.Label));
+        _undo.Add(Capture(_historyLabels[_historyIndex]));
+        Restore(entry);
+        _historyIndex++;
+        return true;
+    }
 
+    private void Restore(Snapshot entry)
+    {
         foreach (var layer in _layers)
             layer.Dispose();
         _layers.Clear();
@@ -182,22 +267,24 @@ public sealed class ImageDocument : IDisposable
         Height = entry.Height;
         ActiveIndex = entry.ActiveIndex;
         IsDirty = true;
+    }
+
+    private void NotifyStateChanged()
+    {
         Invalidate();
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void ClearHistory()
+    private void DropRedoBranch()
     {
-        foreach (var entry in _undo)
-            entry.Dispose();
+        if (_historyIndex >= _historyLabels.Count - 1)
+            return;
+
+        _historyLabels.RemoveRange(_historyIndex + 1, _historyLabels.Count - _historyIndex - 1);
         foreach (var entry in _redo)
             entry.Dispose();
-        _undo.Clear();
         _redo.Clear();
     }
-
-    /// <summary>当前状态是否还能撤销（供 UI 判断）。</summary>
-    public int HistoryDepth => _undo.Count;
 
     private Snapshot Capture(string label)
     {
@@ -213,12 +300,73 @@ public sealed class ImageDocument : IDisposable
         foreach (var entry in _undo)
             total += entry.Bytes;
 
+        var dropped = 0;
         while (_undo.Count > 1 && (_undo.Count > MaxHistory || total > MaxHistoryBytes))
         {
             total -= _undo[0].Bytes;
             _undo[0].Dispose();
             _undo.RemoveAt(0);
+            dropped++;
         }
+
+        // 最早的状态已经无法回溯，连同历史面板里的标签一起丢掉（至少保留当前状态）
+        if (dropped > 0)
+        {
+            var remove = Math.Min(dropped, _historyLabels.Count - 1);
+            _historyLabels.RemoveRange(0, remove);
+            _historyIndex -= remove;
+        }
+    }
+
+    // ------------------------------------------------------------------ 历史缩略图
+
+    /// <summary>历史面板用：某个状态的布局快照（含图层本身），下标 0 最早。</summary>
+    public IReadOnlyList<string> HistoryLabels => _historyLabels;
+
+    /// <summary>当前所处的历史状态下标。</summary>
+    public int HistoryIndex => _historyIndex;
+
+    /// <summary>
+    /// 取某个历史状态的缩略图。返回的是副本，由调用方负责释放。
+    /// 结果会被缓存在快照里，同一个状态不会重复合成整幅画面。
+    /// </summary>
+    public Image<Bgra32>? GetHistoryThumbnail(int stateIndex, int maxSide = 40)
+    {
+        lock (_historyLock)
+        {
+            var snapshot = SnapshotOfState(stateIndex);
+            if (snapshot is null)
+                return null;
+
+            if (snapshot.Thumbnail is null)
+            {
+                using var full = LayerCompositor.Composite(snapshot.Width, snapshot.Height, snapshot.Layers);
+                snapshot.Thumbnail = BitmapFactory.ToThumbnailImage(full, maxSide);
+            }
+
+            return snapshot.Thumbnail.Clone();
+        }
+    }
+
+    /// <summary>
+    /// 找到某个状态对应的快照。当前状态没有快照（画布内容就是它），返回 null。
+    /// </summary>
+    private Snapshot? SnapshotOfState(int stateIndex)
+    {
+        if (stateIndex < 0 || stateIndex >= _historyLabels.Count)
+            return null;
+
+        if (stateIndex < _historyIndex)
+            return stateIndex < _undo.Count ? _undo[stateIndex] : null;
+
+        if (stateIndex > _historyIndex)
+        {
+            // 重做栈是倒着压的：越靠后的元素越接近当前状态
+            var at = _historyLabels.Count - 1 - stateIndex;
+            return at >= 0 && at < _redo.Count ? _redo[at] : null;
+        }
+
+        return null;
     }
 
     // ------------------------------------------------------------------ 图层操作
@@ -493,6 +641,9 @@ public sealed class ImageDocument : IDisposable
 
         public int Height { get; } = height;
 
+        /// <summary>历史面板缩略图（惰性生成），由快照负责释放。</summary>
+        public Image<Bgra32>? Thumbnail { get; set; }
+
         public long Bytes
         {
             get
@@ -517,6 +668,9 @@ public sealed class ImageDocument : IDisposable
 
         public void Dispose()
         {
+            Thumbnail?.Dispose();
+            Thumbnail = null;
+
             if (_released)
                 return;
 

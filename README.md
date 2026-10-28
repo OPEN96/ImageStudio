@@ -1,6 +1,6 @@
 # ImageStudio
 
-基于 **Avalonia 12 / .NET 10** 的跨平台图像编辑器：图层与混合模式、选区与抠图、画笔/橡皮/油漆桶/渐变/文字、图层内容移动与自由变换（缩放/旋转），全部手写像素管线（ImageSharp），不依赖任何商业组件。
+基于 **Avalonia 12 / .NET 10** 的跨平台图像编辑器：图层与混合模式、选区与抠图、画笔/橡皮/油漆桶/渐变/文字、图层内容移动、自由变换（缩放/旋转），以及**历史记录面板**（可直接跳到任意一步），全部手写像素管线（ImageSharp），不依赖任何商业组件。
 
 ## 平台支持
 
@@ -33,7 +33,7 @@ sudo dnf install libX11 libICE libSM libXext fontconfig freetype icu google-noto
 ```bash
 dotnet build ImageStudio.slnx -c Release        # 编译
 dotnet run   --project ImageStudio              # 直接运行
-dotnet run   --project tools/ModelCheck -c Release   # 模型层 140 项断言
+dotnet run   --project tools/ModelCheck -c Release   # 模型层 220 项断言
 ```
 
 ## 打包最小版本

@@ -916,6 +916,81 @@ Check("恒等判断不会把平移误判为无事发生",
 using (var blank = new Image<Bgra32>(8, 8))
     Check("全透明图退回整幅画布", TransformOps.ContentBounds(blank) == new Rectangle(0, 0, 8, 8));
 
+// ---------------------------------------------------------------- 历史面板
+Console.WriteLine("\n[历史面板：状态列表与任意跳转]");
+using (var panelDoc = new ImageDocument(SolidImage(64, 64, 200, 30, 30), null, "打开 sample"))
+{
+    Check("初始只有打开这一个状态",
+        panelDoc.HistoryCount == 1 && panelDoc.HistoryIndex == 0);
+    Check("初始标签就是打开动作", panelDoc.HistoryLabels[0] == "打开 sample", panelDoc.HistoryLabels[0]);
+
+    panelDoc.AddLayer("图层 A");
+    panelDoc.AddLayer("图层 B");
+    Check("每步操作新增一个状态",
+        panelDoc.HistoryCount == 3 && panelDoc.HistoryIndex == 2 && panelDoc.Layers.Count == 3);
+    Check("标签按操作先后排列",
+        panelDoc.HistoryLabels[1] == "新建图层" && panelDoc.HistoryLabels[2] == "新建图层");
+    Check("撤销提示为当前状态的操作名", panelDoc.UndoLabel == "新建图层", panelDoc.UndoLabel);
+
+    panelDoc.Undo();
+    Check("撤销后仍保留后续状态", panelDoc.HistoryIndex == 1 && panelDoc.HistoryCount == 3 && panelDoc.CanRedo);
+    Check("撤销后图层同步回退", panelDoc.Layers.Count == 2);
+    Check("重做提示为可恢复的操作", panelDoc.RedoLabel == "新建图层", panelDoc.RedoLabel);
+
+    Check("向前跳转到最新状态", panelDoc.JumpToHistory(2) && panelDoc.Layers.Count == 3);
+    Check("跳到当前位置视为无操作", !panelDoc.JumpToHistory(2));
+    Check("越界跳转被夹紧且不移动", !panelDoc.JumpToHistory(99) && panelDoc.HistoryIndex == 2);
+
+    panelDoc.ActiveIndex = 2;
+    Check("一步跳回最初状态", panelDoc.JumpToHistory(0) && panelDoc.Layers.Count == 1);
+    Check("跳转后回到下标 0", panelDoc.HistoryIndex == 0 && panelDoc.CanRedo);
+
+    using (var scope = panelDoc.BeginEdit("填色"))
+        panelDoc.Layers[0].ReplacePixels(Solid(90));
+    Check("历史中途落笔丢弃后续分支",
+        panelDoc.HistoryCount == 2 && panelDoc.HistoryIndex == 1 && !panelDoc.CanRedo);
+    Check("新分支标签正确", panelDoc.HistoryLabels[1] == "填色", panelDoc.HistoryLabels[1]);
+
+    panelDoc.TransformAll("裁剪",
+        img => ImageOps.Crop(img, new Rectangle(0, 0, 16, 16)),
+        m => ImageOps.Crop(m, new Rectangle(0, 0, 16, 16)));
+    Check("画布级操作进入历史", panelDoc.Width == 16 && panelDoc.HistoryIndex == 2);
+
+    Check("跳回裁剪前恢复尺寸", panelDoc.JumpToHistory(1) && panelDoc.Width == 64 && panelDoc.Height == 64);
+    Check("图层随状态一起恢复", panelDoc.Layers[0].Width == 64 && panelDoc.Layers[0].Height == 64);
+
+    using (var thumb = panelDoc.GetHistoryThumbnail(0, 24))
+        Check("历史状态能生成缩略图", thumb is not null && thumb.Width == 24 && thumb.Height == 24,
+            thumb is null ? "null" : $"{thumb.Width}x{thumb.Height}");
+
+    using (var cached = panelDoc.GetHistoryThumbnail(0, 24))
+        Check("缩略图被缓存复用", cached is not null);
+
+    Check("当前状态没有快照缩略图", panelDoc.GetHistoryThumbnail(panelDoc.HistoryIndex, 24) is null);
+
+    using (var now = panelDoc.CurrentThumbnail(24))
+        Check("当前画面可补一张缩略图", now.Width == 24 && now.Height == 24);
+
+    Check("跳转还会还原当时的活动图层", panelDoc.ActiveIndex == 0);
+}
+
+Console.WriteLine("\n[历史裁剪：标签随队列同步]");
+using (var capped = new ImageDocument(new Image<Bgra32>(32, 32)))
+{
+    for (var i = 0; i < 40; i++)
+    {
+        using var scope = capped.BeginEdit("步骤" + i);
+        capped.Layers[0].ReplacePixels(Solid((byte)(i * 5 % 255)));
+    }
+
+    Check("标签数与可达状态一致",
+        capped.HistoryCount == capped.HistoryIndex + 1 && capped.HistoryCount <= 21,
+        $"{capped.HistoryCount}/{capped.HistoryIndex}");
+    Check("跳转仍受上限约束", capped.JumpToHistory(0) && capped.HistoryIndex == 0);
+    Check("跳到最后回到最新状态",
+        capped.JumpToHistory(capped.HistoryCount - 1) && !capped.CanRedo && capped.CanUndo);
+}
+
 Console.WriteLine($"\n结果: {passed} 通过, {failed} 失败");
 return failed == 0 ? 0 : 1;
 

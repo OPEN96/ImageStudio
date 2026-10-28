@@ -207,7 +207,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             StatusText = "正在打开 " + Path.GetFileName(path) + " …";
 
             var image = await Task.Run(() => ImageCodec.Load(path));
-            var document = new ImageDocument(image, path);
+            var document = new ImageDocument(image, path, "打开 " + Path.GetFileName(path));
             SetDocument(document, fit: true);
             StatusText = $"已打开 {Path.GetFileName(path)} · {image.Width} × {image.Height}";
             return true;
@@ -306,6 +306,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             SetSelection(null);
 
         RefreshBitmap();
+        RefreshLayers();
+        RefreshHistory();
         RefreshCommandStates();
     }
 
@@ -327,6 +329,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             ImageSource = null;
             _masterBitmap = null;
             RefreshLayers();
+            RefreshHistory();
             return;
         }
 
@@ -596,7 +599,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return img;
         });
 
-        SetDocument(new ImageDocument(image), fit: true);
+        SetDocument(new ImageDocument(image, null, "新建画布"), fit: true);
         StatusText = $"已新建 {w} × {h} 画布";
     }
 
@@ -723,10 +726,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (_document is null)
             return;
 
+        var label = _document.UndoLabel;
         _document.Undo();
         ImageSource = _masterBitmap;
         CenterImage();
-        StatusText = "已撤销";
+        StatusText = label is null ? "已撤销" : $"已撤销「{label}」";
     }
 
     private bool CanUndo() => _document?.CanUndo == true;
@@ -737,10 +741,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (_document is null)
             return;
 
+        var label = _document.RedoLabel;
         _document.Redo();
         ImageSource = _masterBitmap;
         CenterImage();
-        StatusText = "已重做";
+        StatusText = _document.HistoryLabels.ElementAtOrDefault(_document.HistoryIndex) is { } now
+            ? $"已重做「{label}」，当前状态：{now}"
+            : $"已重做「{label}」";
     }
 
     private bool CanRedo() => _document?.CanRedo == true;
@@ -1011,6 +1018,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _stroke = null;
         _previewBitmap?.Dispose();
         _previewBitmap = null;
+        ClearHistoryItems();
         ReleaseTransformBuffers();
         if (_document is not null)
             _document.Changed -= OnDocumentChanged;

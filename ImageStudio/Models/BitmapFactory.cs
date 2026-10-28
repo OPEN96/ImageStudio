@@ -80,8 +80,8 @@ public static class BitmapFactory
         });
     }
 
-    /// <summary>生成等比缩放到 <paramref name="maxSide"/> 以内的缩略图，用于图层列表。</summary>
-    public static WriteableBitmap ToThumbnail(Image<Bgra32> image, int maxSide = 40)
+    /// <summary>等比缩放到 <paramref name="maxSide"/> 以内后的像素数据（不产生 Avalonia 位图）。</summary>
+    public static Image<Bgra32> ToThumbnailImage(Image<Bgra32> image, int maxSide = 40)
     {
         var scale = Math.Min(
             (double)maxSide / Math.Max(1, image.Width),
@@ -91,7 +91,13 @@ public static class BitmapFactory
         var w = Math.Max(1, (int)Math.Round(image.Width * scale));
         var h = Math.Max(1, (int)Math.Round(image.Height * scale));
 
-        using var scaled = ImageOps.Resize(image, w, h);
+        return ImageOps.Resize(image, w, h);
+    }
+
+    /// <summary>生成等比缩放到 <paramref name="maxSide"/> 以内的缩略图，用于图层列表。</summary>
+    public static WriteableBitmap ToThumbnail(Image<Bgra32> image, int maxSide = 40)
+    {
+        using var scaled = ToThumbnailImage(image, maxSide);
         return ToBitmap(scaled);
     }
 }

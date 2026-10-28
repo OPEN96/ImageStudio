@@ -202,6 +202,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnHistoryRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            sender is Control { DataContext: HistoryItemViewModel item })
+        {
+            _viewModel.SelectHistory(item);
+        }
+    }
+
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         e.DragEffects = e.DataTransfer.Contains(DataFormat.File)

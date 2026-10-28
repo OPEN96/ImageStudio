@@ -196,6 +196,21 @@
     <Setter Property="Background" Value="#2C3B55" />
   </Style>
 
+  <!-- 历史面板：行 -->
+  <Style Selector="Border.historyRow">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="CornerRadius" Value="6" />
+  </Style>
+  <Style Selector="Border.historyRow:pointerover">
+    <Setter Property="Background" Value="#26262E" />
+  </Style>
+  <Style Selector="Border.historyRow.current">
+    <Setter Property="Background" Value="#2C3B55" />
+  </Style>
+  <Style Selector="Border.historyRow.future TextBlock">
+    <Setter Property="Opacity" Value="0.45" />
+  </Style>
+
   <!-- 图层面板：眼睛开关 -->
   <Style Selector="ToggleButton.eye">
     <Setter Property="Width" Value="22" />
