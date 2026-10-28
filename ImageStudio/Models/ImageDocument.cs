@@ -67,8 +67,8 @@ public sealed class ImageDocument : IDisposable
     public Image<Bgra32> Composite() => _composite ??= LayerCompositor.Composite(Width, Height, _layers);
 
     /// <summary>带预览覆盖层的临时合成（不写缓存），用于实时预览。</summary>
-    public Image<Bgra32> CompositeWith(int index, Image<Bgra32> pixels) =>
-        LayerCompositor.Composite(Width, Height, _layers, index, pixels);
+    public Image<Bgra32> CompositeWith(int index, Image<Bgra32> pixels, Image<L8>? mask = null) =>
+        LayerCompositor.Composite(Width, Height, _layers, index, pixels, mask);
 
     public Layer? LayerAt(int index) =>
         index >= 0 && index < _layers.Count ? _layers[index] : null;
@@ -272,6 +272,25 @@ public sealed class ImageDocument : IDisposable
         layer.Mask?.Dispose();
         layer.Mask = selection.ToMask();
         layer.MaskEnabled = true;
+    }
+
+    /// <summary>
+    /// 平移某个图层的内容（有选区时只移动选区内的像素）。返回是否真的发生了变化。
+    /// 蒙版跟随内容一起移动，避免“内容走了、遮罩留在原地”。
+    /// </summary>
+    public bool MoveLayerContent(int index, int dx, int dy, Selection? clip, string label)
+    {
+        var layer = LayerAt(index);
+        if (layer is null || (dx == 0 && dy == 0))
+            return false;
+
+        using var _ = BeginEdit(label);
+
+        layer.ReplacePixels(MoveOps.Translate(layer.Pixels, dx, dy, clip));
+        if (layer.Mask is { } mask)
+            layer.ReplaceMask(MoveOps.TranslateMask(mask, dx, dy, clip));
+
+        return true;
     }
 
     public void DeleteLayer(int index)

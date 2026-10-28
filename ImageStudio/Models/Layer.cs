@@ -52,6 +52,17 @@ public sealed class Layer : IDisposable
         ContentVersion++;
     }
 
+    /// <summary>替换蒙版并释放旧的缓冲（<paramref name="mask"/> 为空表示移除蒙版）。</summary>
+    public void ReplaceMask(Image<L8>? mask)
+    {
+        if (ReferenceEquals(Mask, mask))
+            return;
+
+        Mask?.Dispose();
+        Mask = mask;
+        ContentVersion++;
+    }
+
     /// <summary>对像素与蒙版同时施加几何变换（尺寸变化只允许各层一致）。</summary>
     public void Transform(
         Func<Image<Bgra32>, Image<Bgra32>> pixelOp,

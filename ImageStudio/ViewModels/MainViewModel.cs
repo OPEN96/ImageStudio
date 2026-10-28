@@ -134,6 +134,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial bool IsBusy { get; set; }
 
+    /// <summary>窗口标题：文件名 + 未保存标记。</summary>
+    public string WindowTitle =>
+        (HasDocument ? (IsDirty ? "● " : string.Empty) + FileName + " — " : string.Empty)
+        + "ImageStudio · 图像编辑器";
+
+    partial void OnIsDirtyChanged(bool value) => OnPropertyChanged(nameof(WindowTitle));
+
+    partial void OnFileNameChanged(string value) => OnPropertyChanged(nameof(WindowTitle));
+
+    partial void OnHasDocumentChanged(bool value) => OnPropertyChanged(nameof(WindowTitle));
+
     // ------------------------------------------------------------------ 调整参数
 
     [ObservableProperty]
@@ -187,6 +198,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public async Task<bool> OpenPathAsync(string path)
     {
+        if (!await ConfirmDiscardAsync("打开其他图片"))
+            return false;
+
         try
         {
             IsBusy = true;
@@ -206,6 +220,34 @@ public partial class MainViewModel : ObservableObject, IDisposable
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>关闭窗口前的确认。返回 false 表示用户取消了关闭。</summary>
+    public Task<bool> ConfirmCloseAsync() => ConfirmDiscardAsync("关闭窗口");
+
+    /// <summary>
+    /// 有未保存修改时询问保存 / 不保存 / 取消。
+    /// 返回 false 表示流程应当中止（用户取消，或选择保存但另存为被放弃）。
+    /// </summary>
+    public async Task<bool> ConfirmDiscardAsync(string action)
+    {
+        if (_document is not { IsDirty: true } || Owner is null)
+            return true;
+
+        var dialog = new Views.ConfirmDialog(
+            "未保存的修改",
+            $"“{FileName}” 还有未保存的修改，{action}前要保存吗？");
+
+        switch (await dialog.ShowDialog<Views.ConfirmResult>(Owner))
+        {
+            case Views.ConfirmResult.Cancel:
+                return false;
+            case Views.ConfirmResult.Save:
+                await SaveAsync();
+                return _document is not { IsDirty: true };
+            default:
+                return true;
         }
     }
 
@@ -529,6 +571,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private async Task NewAsync()
     {
         if (Owner is null)
+            return;
+
+        if (!await ConfirmDiscardAsync("新建画布"))
             return;
 
         var dialog = new Views.SizeDialog("新建画布", 1920, 1080, "创建");

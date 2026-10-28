@@ -8,7 +8,7 @@
         x:Class="ImageStudio.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         d:DesignWidth="1360" d:DesignHeight="860"
-        Title="ImageStudio · 图像编辑器"
+        Title="{Binding WindowTitle}"
         Width="1360" Height="880"
         MinWidth="1040" MinHeight="700"
         WindowStartupLocation="CenterScreen"
@@ -126,6 +126,7 @@
             <MenuItem Header="选区：Ctrl+A 全选 / Ctrl+D 取消 / Delete 删除内容 / Esc 取消" IsEnabled="False" />
             <MenuItem Header="绘画：B 画笔 / E 橡皮 / P 油漆桶 / G 渐变 / T 文字" IsEnabled="False" />
             <MenuItem Header="笔刷：[ ] 缩放大小 · X 交换前景 / 背景 · 纯色填充即油漆桶" IsEnabled="False" />
+            <MenuItem Header="移动：V 移动工具 / 方向键微调 1px（Shift 为 10px）" IsEnabled="False" />
             <MenuItem Header="滚轮缩放 · 左键拖动平移 · 选区工具下拖动即框选" IsEnabled="False" />
           </MenuItem>
         </Menu>
@@ -241,6 +242,11 @@
             <PathIcon Width="19" Height="19"
                       Data="M13,24c-3.26,0 -6.19,-1.67 -7.91,-4.42l-4.11,-5.85c-0.31,-0.48 -0.21,-1.12 0.24,-1.48 0.47,-0.38 1.14,-0.34 1.57,0.08L5,13.86V4c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v6h1V2c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v8h1V3c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v7h1V5c0,-0.55 0.45,-1 1,-1s1,0.45 1,1v10.5l2.7,-1.35c0.42,-0.21 0.93,-0.19 1.35,0.05 0.6,0.34 0.9,1.02 0.7,1.69l-1.4,4.66C19.29,22.33 16.35,24 13,24z" />
           </Button>
+          <ToggleButton Classes="rail" ToolTip.Tip="移动图层内容 (V)" IsChecked="{Binding IsMoveTool, Mode=OneWay}"
+                        Click="OnMoveToolClick">
+            <PathIcon Width="18" Height="18"
+                      Data="M12,2L15,5H13V11H19V9L22,12L19,15V13H13V19H15L12,22L9,19H11V13H5V15L2,12L5,9V11H11V5H9Z" />
+          </ToggleButton>
           <ToggleButton Classes="rail" ToolTip.Tip="裁剪" IsChecked="{Binding IsCropTool, Mode=OneWay}"
                         Click="OnCropToolClick">
             <PathIcon Width="19" Height="19"

@@ -256,23 +256,7 @@ public partial class MainViewModel
         try
         {
             using var composed = _document.CompositeWith(_document.ActiveIndex, _stroke.Pixels);
-
-            if (_previewBitmap is null ||
-                _previewBitmap.PixelSize.Width != composed.Width ||
-                _previewBitmap.PixelSize.Height != composed.Height)
-            {
-                _previewBitmap?.Dispose();
-                _previewBitmap = BitmapFactory.ToBitmap(composed);
-                ImageSource = _previewBitmap;
-                return;
-            }
-
-            BitmapFactory.CopyInto(_previewBitmap, composed);
-
-            if (!ReferenceEquals(ImageSource, _previewBitmap))
-                ImageSource = _previewBitmap;
-
-            SourceVersion++;
+            ShowPreviewBitmap(composed);
         }
         catch (Exception ex)
         {

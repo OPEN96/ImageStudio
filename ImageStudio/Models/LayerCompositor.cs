@@ -19,7 +19,8 @@ public static class LayerCompositor
         int height,
         IReadOnlyList<Layer> layers,
         int overrideIndex = -1,
-        Image<Bgra32>? overridePixels = null)
+        Image<Bgra32>? overridePixels = null,
+        Image<L8>? overrideMask = null)
     {
         var dst = new Image<Bgra32>(Math.Max(1, width), Math.Max(1, height));
 
@@ -35,19 +36,20 @@ public static class LayerCompositor
             if (src.Width != dst.Width || src.Height != dst.Height)
                 continue;
 
-            BlendLayer(dst, src, layer);
+            var mask = i == overrideIndex && overrideMask is not null ? overrideMask : layer.Mask;
+            BlendLayer(dst, src, layer, mask);
         }
 
         return dst;
     }
 
-    private static void BlendLayer(Image<Bgra32> dst, Image<Bgra32> src, Layer layer)
+    private static void BlendLayer(Image<Bgra32> dst, Image<Bgra32> src, Layer layer, Image<L8>? maskOverride)
     {
         var mode = layer.BlendMode;
         var opacity = Math.Clamp(layer.Opacity, 0, 1);
         var separable = BlendModes.Separable(mode);
         var nonSeparable = BlendModes.IsNonSeparable(mode);
-        var mask = layer.MaskEnabled ? layer.Mask : null;
+        var mask = layer.MaskEnabled ? maskOverride : null;
 
         var width = dst.Width;
         var height = dst.Height;

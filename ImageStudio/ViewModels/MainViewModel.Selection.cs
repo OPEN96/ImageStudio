@@ -56,6 +56,7 @@ public partial class MainViewModel
         CanvasTool.Bucket => "点击以填充相近颜色区域，可调整容差",
         CanvasTool.Gradient => "从起点拖到终点铺开渐变，Shift 可画水平/垂直线",
         CanvasTool.Text => "点击画布输入文字，生成独立文字图层",
+        CanvasTool.Move => "拖动移动图层内容 · Shift 约束方向 · 方向键微调 1px",
         _ => "按住左键拖动画布，滚轮缩放"
     };
 
@@ -69,6 +70,7 @@ public partial class MainViewModel
         OnPropertyChanged(nameof(IsEllipseSelectTool));
         OnPropertyChanged(nameof(IsLassoTool));
         OnPropertyChanged(nameof(IsWandTool));
+        OnPropertyChanged(nameof(IsMoveTool));
         OnPropertyChanged(nameof(IsSelectionToolActive));
         OnPropertyChanged(nameof(IsCropMode));
         OnPropertyChanged(nameof(ActiveToolHint));

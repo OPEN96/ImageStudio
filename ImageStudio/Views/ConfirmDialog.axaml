@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ImageStudio.Views.ConfirmDialog"
+        Width="430"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        RequestedThemeVariant="Dark"
+        Background="{StaticResource PanelBg}"
+        FontFamily="{StaticResource AppFontFamily}"
+        Icon="/Assets/app.png"
+        Title="提示">
+
+  <StackPanel Margin="22,18,22,20" Spacing="16">
+    <TextBlock x:Name="HeaderText" Text="提示" FontSize="15" Foreground="{StaticResource TextPrimary}" />
+
+    <TextBlock x:Name="MessageText" TextWrapping="Wrap" FontSize="12.5"
+               Foreground="{StaticResource TextMuted}" LineHeight="20" />
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Classes="chip" Content="取消" Width="88" Click="OnCancelClick" />
+      <Button Classes="chip" Content="不保存" Width="88" Click="OnDiscardClick" />
+      <Button Classes="accent" Content="保存" Width="96" Click="OnSaveClick" />
+    </StackPanel>
+  </StackPanel>
+</Window>

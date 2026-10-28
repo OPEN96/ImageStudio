@@ -43,9 +43,13 @@ public partial class MainWindow : Window
         Canvas.TextRequested += async (_, e) => await GuardedAsync(
             () => _viewModel.OnTextAsync(e.Position));
 
+        Canvas.MoveStarted += (_, e) => _viewModel.OnMoveStart(e.Position);
+        Canvas.MoveMoved += (_, e) =>
+            _viewModel.OnMoveUpdate(e.Position, e.Modifiers.HasFlag(KeyModifiers.Shift));
+        Canvas.MoveEnded += (_, _) => _viewModel.OnMoveEnd();
+
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
-        Closing += (_, _) => _viewModel.Dispose();
     }
 
     private async Task GuardedAsync(Func<Task> action)
@@ -66,6 +70,43 @@ public partial class MainWindow : Window
         Opened += async (_, _) => await _viewModel.OpenPathAsync(path);
     }
 
+    private bool _closeRequested;
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        // 有未保存修改时先拦下来问一次，确认后再真正关闭
+        if (_closeRequested || !_viewModel.IsDirty)
+        {
+            _viewModel.Dispose();
+            base.OnClosing(e);
+            return;
+        }
+
+        e.Cancel = true;
+        base.OnClosing(e);
+        _ = ConfirmCloseAsync();
+    }
+
+    private async Task ConfirmCloseAsync()
+    {
+        bool canClose;
+        try
+        {
+            canClose = await _viewModel.ConfirmCloseAsync();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusHint("关闭失败：" + ex.Message);
+            return;
+        }
+
+        if (!canClose)
+            return;
+
+        _closeRequested = true;
+        Close();
+    }
+
     protected override void OnOpened(EventArgs e)
     {
         base.OnOpened(e);
@@ -75,6 +116,9 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------------ 工具
+
+    private void OnMoveToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Move);
 
     private void OnPanToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _viewModel.SetTool(CanvasTool.Pan);
@@ -194,6 +238,32 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 移动工具下方向键微调（Shift 为 10 像素）
+        if (_viewModel.IsMoveTool && _viewModel.HasDocument &&
+            e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+        {
+            var step = e.KeyModifiers == KeyModifiers.Shift ? 10 : 1;
+            switch (e.Key)
+            {
+                case Key.Left:
+                    _viewModel.NudgeActiveLayer(-step, 0);
+                    e.Handled = true;
+                    return;
+                case Key.Right:
+                    _viewModel.NudgeActiveLayer(step, 0);
+                    e.Handled = true;
+                    return;
+                case Key.Up:
+                    _viewModel.NudgeActiveLayer(0, -step);
+                    e.Handled = true;
+                    return;
+                case Key.Down:
+                    _viewModel.NudgeActiveLayer(0, step);
+                    e.Handled = true;
+                    return;
+            }
+        }
+
         // 无修饰键：工具切换与笔刷尺寸
         if (e.KeyModifiers == KeyModifiers.None)
         {
@@ -217,6 +287,10 @@ public partial class MainWindow : Window
                     return;
                 case Key.T:
                     _viewModel.SetTool(CanvasTool.Text);
+                    e.Handled = true;
+                    return;
+                case Key.V:
+                    _viewModel.SetTool(CanvasTool.Move);
                     e.Handled = true;
                     return;
                 case Key.M:

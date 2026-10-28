@@ -25,7 +25,8 @@ public enum CanvasTool
     Eraser,
     Bucket,
     Gradient,
-    Text
+    Text,
+    Move
 }
 
 public sealed class CanvasPointerEventArgs(Point imagePosition, bool isInside) : EventArgs
@@ -47,6 +48,13 @@ public sealed class SelectionPathEventArgs(IReadOnlyList<Point> points, KeyModif
 }
 
 public sealed class WandPickEventArgs(Point position, KeyModifiers modifiers) : EventArgs
+{
+    public Point Position { get; } = position;
+    public KeyModifiers Modifiers { get; } = modifiers;
+}
+
+/// <summary>移动工具拖动中的位置（图像像素坐标）与修饰键。</summary>
+public sealed class MoveEventArgs(Point position, KeyModifiers modifiers) : EventArgs
 {
     public Point Position { get; } = position;
     public KeyModifiers Modifiers { get; } = modifiers;
@@ -152,6 +160,7 @@ public class ImageCanvas : Control
     private bool _isPainting;
     private Point? _hover;
     private bool _isGradientDragging;
+    private bool _isMoving;
     private Point _gradientStart;
     private Point _gradientCurrent;
 
@@ -266,6 +275,15 @@ public class ImageCanvas : Control
 
     /// <summary>文字工具点击。</summary>
     public event EventHandler<PaintEventArgs>? TextRequested;
+
+    /// <summary>移动工具按下（参数为起始点）。</summary>
+    public event EventHandler<PaintEventArgs>? MoveStarted;
+
+    /// <summary>移动工具拖动中。</summary>
+    public event EventHandler<MoveEventArgs>? MoveMoved;
+
+    /// <summary>移动工具抬起，需要提交结果。</summary>
+    public event EventHandler? MoveEnded;
 
     // ------------------------------------------------------------------ 尺寸换算
 
@@ -660,6 +678,7 @@ public class ImageCanvas : Control
             }
 
             _isSelectDragging = false;
+            _isMoving = false;
             _lassoPoints = null;
             _isGradientDragging = false;
             _hover = null;
@@ -731,6 +750,11 @@ public class ImageCanvas : Control
                 WandPickRequested?.Invoke(this, new WandPickEventArgs(ToImage(position), modifiers));
                 break;
 
+            case CanvasTool.Move:
+                _isMoving = true;
+                MoveStarted?.Invoke(this, new PaintEventArgs(image));
+                break;
+
             case CanvasTool.Brush:
             case CanvasTool.Eraser:
                 // 画笔不从画布边缘钳制，允许从外侧画入
@@ -764,6 +788,12 @@ public class ImageCanvas : Control
     /// <summary>拖动过程中持续调用。</summary>
     private void UpdateDrag(Point position, KeyModifiers modifiers)
     {
+        if (_isMoving)
+        {
+            MoveMoved?.Invoke(this, new MoveEventArgs(ClampToImage(ToImage(position)), modifiers));
+            return;
+        }
+
         if (_isCropping)
         {
             var current = ClampToImage(ToImage(position));
@@ -816,6 +846,13 @@ public class ImageCanvas : Control
     /// <summary>结束拖动并抛出选区完成事件。</summary>
     private void EndDrag(KeyModifiers modifiers)
     {
+        if (_isMoving)
+        {
+            _isMoving = false;
+            MoveEnded?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
         if (_isCropping)
         {
             _isCropping = false;

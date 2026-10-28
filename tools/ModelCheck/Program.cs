@@ -665,6 +665,92 @@ using (var toBackground = PaintOps.Gradient(gradientBase, null, 0, 5, 100, 5, wh
 using (var zero = PaintOps.Gradient(gradientBase, null, 20, 20, 20, 20, white, blue, GradientKind.Linear))
     Check("零长度渐变不修改图像", zero[50, 5].R == 0);
 
+// ---------------------------------------------------------------- 移动
+Console.WriteLine("\n[移动]");
+
+using (var canvas = BlockImage(12, 12, new Rectangle(0, 0, 4, 4)))
+using (var moved = MoveOps.Translate(canvas, 4, 0))
+{
+    Check("整幅平移后内容到位", moved[4, 0].A == 255 && moved[7, 3].A == 255,
+        $"{moved[4, 0].A}/{moved[7, 3].A}");
+    Check("整幅平移后原位透明", moved[0, 0].A == 0, moved[0, 0].A.ToString());
+    Check("整幅平移后越界部分被裁掉", moved[8, 0].A == 0 && moved[11, 0].A == 0);
+}
+
+using (var canvas = BlockImage(12, 12, new Rectangle(0, 0, 4, 4)))
+using (var same = MoveOps.Translate(canvas, 0, 0))
+    Check("零位移保持原样", same[0, 0].A == 255 && same[5, 5].A == 0);
+
+using (var canvas = BlockImage(12, 12, new Rectangle(0, 0, 4, 4)))
+using (var far = MoveOps.Translate(canvas, -8, -8))
+    Check("整幅移出画布后全透明", far[0, 0].A == 0 && far[11, 11].A == 0);
+
+// 选区外必须保持原样：白块之外再放一个红色标记做“见证点”
+using (var canvas = BlockImage(12, 12, new Rectangle(0, 0, 4, 4)))
+{
+    canvas[9, 9] = new Bgra32 { R = 200, G = 0, B = 0, A = 255 };
+    var clip = Selection.FromRect(12, 12, new Rectangle(0, 0, 4, 4));
+    using var moved = MoveOps.Translate(canvas, 6, 0, clip);
+
+    Check("选区内容移动到新位置", moved[6, 0].A == 255 && moved[9, 3].A == 255,
+        $"{moved[6, 0].A}/{moved[9, 3].A}");
+    Check("选区原位被清空", moved[0, 0].A == 0 && moved[3, 3].A == 0);
+    Check("选区外像素不受影响", moved[9, 9].A == 255 && moved[9, 9].R == 200,
+        $"{moved[9, 9].A}/{moved[9, 9].R}");
+    Check("选区边界外一列保持原样", moved[4, 0].A == 0);
+}
+
+// 半覆盖（羽化边缘）像素：原位减淡、目标位置按覆盖度叠加
+var partialCoverage = new byte[16];
+partialCoverage[0] = 128;
+using (var sparse = SparseImage(4, 4, (0, 0, (byte)255)))
+{
+    var partial = Selection.FromCoverage(4, 4, partialCoverage);
+    using var half = MoveOps.Translate(sparse, 2, 0, partial);
+
+    Check("半覆盖像素原位减淡", half[0, 0].A is >= 120 and <= 136, half[0, 0].A.ToString());
+    Check("半覆盖像素目标按覆盖度叠加", half[2, 0].A is >= 120 and <= 136, half[2, 0].A.ToString());
+    Check("半覆盖移动不影响其他像素", half[3, 0].A == 0, half[3, 0].A.ToString());
+}
+
+// 蒙版跟随内容一起移动 + 一条历史记录
+using (var moveDoc = new ImageDocument(BlockImage(12, 12, new Rectangle(0, 0, 4, 4))))
+{
+    var layer = moveDoc.ActiveLayer!;
+    var mask = Layer.CreateMask(12, 12, 0);
+    mask[0, 0] = new L8(200);
+    layer.Mask = mask;
+
+    var movedOk = moveDoc.MoveLayerContent(0, 4, 0, null, "移动图层");
+    Check("文档移动返回成功", movedOk);
+    Check("移动后像素到位", layer.Pixels[4, 0].A == 255 && layer.Pixels[0, 0].A == 0);
+    Check("蒙版跟随内容移动", layer.Mask![4, 0].PackedValue == 200 && layer.Mask[0, 0].PackedValue == 0,
+        $"{layer.Mask[4, 0].PackedValue}/{layer.Mask[0, 0].PackedValue}");
+    Check("移动产生一条历史记录", moveDoc.CanUndo);
+
+    moveDoc.Undo();
+    var restored = moveDoc.ActiveLayer!;
+    Check("撤销后内容回到原位", restored.Pixels[0, 0].A == 255 && restored.Pixels[4, 0].A == 0,
+        $"{restored.Pixels[0, 0].A}/{restored.Pixels[4, 0].A}");
+
+    Check("零位移不产生历史", !moveDoc.MoveLayerContent(0, 0, 0, null, "移动图层"));
+}
+
+// 选区内移动到已有内容上时按 source-over 叠加（整层平移是覆盖语义，不做混合）
+using (var sparse = SparseImage(4, 4, (1, 0, (byte)128)))
+{
+    sparse[2, 0] = new Bgra32 { R = 0, G = 0, B = 255, A = 255 };
+
+    var onlySecond = new byte[16];
+    onlySecond[1] = 255;
+
+    using var over = MoveOps.Translate(sparse, 1, 0, Selection.FromCoverage(4, 4, onlySecond));
+    Check("选区内的半透明像素与目标内容混合",
+        over[2, 0].A == 255 && over[2, 0].R is >= 120 and <= 136 && over[2, 0].B == 255,
+        $"{over[2, 0].R},{over[2, 0].G},{over[2, 0].B}");
+    Check("整层平移是覆盖语义", MoveOps.Translate(sparse, 1, 0)[2, 0].A == 128);
+}
+
 Console.WriteLine($"\n结果: {passed} 通过, {failed} 失败");
 return failed == 0 ? 0 : 1;
 
@@ -676,6 +762,23 @@ static Image<Bgra32> SolidImage(int w, int h, byte r, byte g, byte b, byte a = 2
         for (var y = 0; y < accessor.Height; y++)
             accessor.GetRowSpan(y).Fill(new Bgra32 { R = r, G = g, B = b, A = a });
     });
+    return img;
+}
+
+static Image<Bgra32> BlockImage(int width, int height, Rectangle block)
+{
+    var img = new Image<Bgra32>(width, height);
+    for (var y = block.Y; y < block.Bottom; y++)
+    for (var x = block.X; x < block.Right; x++)
+        img[x, y] = new Bgra32 { R = 255, G = 255, B = 255, A = 255 };
+    return img;
+}
+
+static Image<Bgra32> SparseImage(int width, int height, params (int X, int Y, byte Alpha)[] pixels)
+{
+    var img = new Image<Bgra32>(width, height);
+    foreach (var (x, y, alpha) in pixels)
+        img[x, y] = new Bgra32 { R = 255, G = 255, B = 255, A = alpha };
     return img;
 }
 
