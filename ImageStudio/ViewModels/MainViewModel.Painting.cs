@@ -166,7 +166,7 @@ public partial class MainViewModel
     public partial bool TextBold { get; set; }
 
     [ObservableProperty]
-    public partial string TextFontFamily { get; set; } = "Microsoft YaHei UI";
+    public partial string TextFontFamily { get; set; } = FontCatalog.DefaultFamily;
 
     // ------------------------------------------------------------------ 笔画生命周期
 

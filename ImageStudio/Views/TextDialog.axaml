@@ -8,7 +8,8 @@
         WindowStartupLocation="CenterOwner"
         RequestedThemeVariant="Dark"
         Background="{StaticResource PanelBg}"
-        FontFamily="Microsoft YaHei UI, Segoe UI, Inter"
+        FontFamily="{StaticResource AppFontFamily}"
+        Icon="/Assets/app.png"
         Title="重命名">
 
   <StackPanel Margin="22,18,22,20" Spacing="14">

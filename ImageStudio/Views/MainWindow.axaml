@@ -14,7 +14,8 @@
         WindowStartupLocation="CenterScreen"
         RequestedThemeVariant="Dark"
         Background="{StaticResource AppBg}"
-        FontFamily="Microsoft YaHei UI, Segoe UI, Inter"
+        FontFamily="{StaticResource AppFontFamily}"
+        Icon="/Assets/app.png"
         DragDrop.AllowDrop="True">
 
   <Design.DataContext>

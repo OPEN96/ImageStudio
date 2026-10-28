@@ -8,7 +8,8 @@
         WindowStartupLocation="CenterOwner"
         RequestedThemeVariant="Dark"
         Background="{StaticResource PanelBg}"
-        FontFamily="Microsoft YaHei UI, Segoe UI, Inter"
+        FontFamily="{StaticResource AppFontFamily}"
+        Icon="/Assets/app.png"
         Title="添加文字">
 
   <StackPanel Margin="22,18,22,20" Spacing="14">
@@ -23,16 +24,8 @@
     <Grid ColumnDefinitions="*,12,96,10,86">
       <StackPanel Grid.Column="0" Spacing="6">
         <TextBlock Text="字体" Classes="value" />
-        <ComboBox x:Name="FontBox" HorizontalAlignment="Stretch">
-          <ComboBoxItem Content="微软雅黑" Tag="Microsoft YaHei UI" />
-          <ComboBoxItem Content="思源 / 等线" Tag="DengXian" />
-          <ComboBoxItem Content="宋体" Tag="SimSun" />
-          <ComboBoxItem Content="黑体" Tag="SimHei" />
-          <ComboBoxItem Content="楷体" Tag="KaiTi" />
-          <ComboBoxItem Content="Segoe UI" Tag="Segoe UI" />
-          <ComboBoxItem Content="Arial" Tag="Arial" />
-          <ComboBoxItem Content="Consolas" Tag="Consolas" />
-        </ComboBox>
+        <!-- 字体列表在运行时从系统字体枚举填充（Windows / macOS / Linux 各自不同） -->
+        <ComboBox x:Name="FontBox" HorizontalAlignment="Stretch" />
       </StackPanel>
 
       <StackPanel Grid.Column="2" Spacing="6">

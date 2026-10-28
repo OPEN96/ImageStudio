@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using ImageStudio.Services;
 using AvaloniaColor = Avalonia.Media.Color;
 
 namespace ImageStudio.Views;
@@ -22,7 +23,7 @@ public partial class TextToolDialog : Window
         BoldBox.IsChecked = bold;
         ContentBox.Text = initial;
 
-        SelectFont(fontFamily);
+        PopulateFonts(fontFamily);
     }
 
     /// <summary>输入的文字内容。</summary>
@@ -33,20 +34,24 @@ public partial class TextToolDialog : Window
 
     public bool ResultBold { get; private set; }
 
-    public string ResultFontFamily { get; private set; } = "Microsoft YaHei UI";
+    public string ResultFontFamily { get; private set; } = FontCatalog.DefaultFamily;
 
-    private void SelectFont(string fontFamily)
+    /// <summary>用系统里真实安装的字体填充下拉框，并尽量选中上次用的那个。</summary>
+    private void PopulateFonts(string fontFamily)
     {
-        foreach (var item in FontBox.Items.OfType<ComboBoxItem>())
-        {
-            if (string.Equals(item.Tag as string, fontFamily, StringComparison.OrdinalIgnoreCase))
-            {
-                FontBox.SelectedItem = item;
-                return;
-            }
-        }
+        var families = FontCatalog.Families;
+        if (families.Count == 0)
+            families = ["Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "DejaVu Sans"];
 
-        FontBox.SelectedIndex = 0;
+        FontBox.ItemsSource = families;
+
+        var match = families.FirstOrDefault(f => string.Equals(f, fontFamily, StringComparison.OrdinalIgnoreCase))
+            ?? families.FirstOrDefault(f => string.Equals(f, FontCatalog.DefaultFamily, StringComparison.OrdinalIgnoreCase));
+
+        if (match is not null)
+            FontBox.SelectedItem = match;
+        else
+            FontBox.SelectedIndex = 0;
     }
 
     private void OnOkClick(object? sender, RoutedEventArgs e)
@@ -61,7 +66,7 @@ public partial class TextToolDialog : Window
         ResultText = text;
         ResultFontSize = (double)(SizeBox.Value ?? 48);
         ResultBold = BoldBox.IsChecked == true;
-        ResultFontFamily = (FontBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "Microsoft YaHei UI";
+        ResultFontFamily = FontBox.SelectedItem as string ?? FontCatalog.DefaultFamily;
         Close(true);
     }
 

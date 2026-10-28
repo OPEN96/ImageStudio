@@ -5,6 +5,8 @@
 
   <Application.Resources>
     <ResourceDictionary>
+      <!-- 跨平台字体链：Windows 雅黑 → macOS 苹方 → Linux 思源/Noto → 通用无衬线 -->
+      <FontFamily x:Key="AppFontFamily">Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, Noto Sans SC, Source Han Sans SC, WenQuanYi Micro Hei, DejaVu Sans, sans-serif</FontFamily>
       <SolidColorBrush x:Key="AppBg" Color="#17171B" />
       <SolidColorBrush x:Key="PanelBg" Color="#1F1F26" />
       <SolidColorBrush x:Key="PanelBgAlt" Color="#262630" />

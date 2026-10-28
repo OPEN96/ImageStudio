@@ -44,3 +44,7 @@ shot*.png
 crop_*.png
 *.tmp
 *.log
+
+# ---- 本地打包输出 ----
+out/
+dist/

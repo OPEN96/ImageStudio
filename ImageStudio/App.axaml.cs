@@ -13,6 +13,9 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // 先解析平台字体（Linux 上并没有微软雅黑），再创建窗口
+            Services.FontCatalog.EnsureLoaded();
+
             var window = new MainWindow();
             desktop.MainWindow = window;
 

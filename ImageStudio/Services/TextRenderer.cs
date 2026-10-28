@@ -16,7 +16,8 @@ namespace ImageStudio.Services;
 /// </summary>
 public static class TextRenderer
 {
-    public const string DefaultFontFamily = "Microsoft YaHei UI, Segoe UI, Inter";
+    /// <summary>当前平台的默认字体（启动时从系统字体里挑出来的中文字体）。</summary>
+    public static string DefaultFontFamily => FontCatalog.DefaultFamily;
 
     /// <summary>渲染文字并按左上角坐标贴进画布大小的透明图层；超出画布的部分被裁掉。</summary>
     public static Image<Bgra32>? RenderToLayer(

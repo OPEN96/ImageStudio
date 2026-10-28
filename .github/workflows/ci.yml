@@ -1,0 +1,239 @@
+name: CI
+
+# 触发时机：
+#   - 推送到主分支 / 任意 PR：跑测试 + 验证三个平台都能构建（不发布）
+#   - 打 v* 标签：额外把三个平台的产物汇总成一个 GitHub Release
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新提交取消上一次未完成的流水线，避免排队
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  CONFIGURATION: Release
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. 模型层单元测试（纯托管代码，不需要图形环境，Linux 上直接跑）
+  # ---------------------------------------------------------------------------
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet 包
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: 还原依赖
+        run: dotnet restore ImageStudio.slnx
+
+      - name: 编译（Release，警告即失败）
+        run: dotnet build ImageStudio.slnx -c ${{ env.CONFIGURATION }} --no-restore -warnaserror
+
+      - name: 运行模型层断言（ModelCheck）
+        run: dotnet run --project tools/ModelCheck -c ${{ env.CONFIGURATION }} --no-build
+
+  # ---------------------------------------------------------------------------
+  # 2. 三平台最小版本构建：Linux x64 / Linux ARM64 / Windows x64
+  #    产物为「自包含 + 单文件 + 压缩」，目标机无需安装 .NET 运行时
+  # ---------------------------------------------------------------------------
+  build:
+    name: 构建 ${{ matrix.rid }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-latest
+          - rid: linux-arm64
+            os: ubuntu-latest
+          - rid: win-x64
+            os: windows-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet 包
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # 打标签时用标签名作为版本号（v1.3.0 -> 1.3.0）
+      - name: 计算版本号
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 发布 ${{ matrix.rid }}
+        shell: bash
+        run: |
+          dotnet publish ImageStudio/ImageStudio.csproj \
+            -c ${{ env.CONFIGURATION }} \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:Version=${{ steps.version.outputs.value }} \
+            -o "out/${{ matrix.rid }}"
+
+      - name: 打包（Linux tar.gz + 桌面集成文件）
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="out/${{ matrix.rid }}"
+          cp packaging/linux/imagestudio.desktop "$dir/"
+          cp packaging/linux/imagestudio.png "$dir/"
+          cp packaging/linux/install.sh "$dir/"
+          chmod +x "$dir/ImageStudio" "$dir/install.sh"
+          chmod 644 "$dir/imagestudio.desktop" "$dir/imagestudio.png"
+          tar -C "$dir" -czf "ImageStudio-${{ matrix.rid }}.tar.gz" .
+          ls -lh "ImageStudio-${{ matrix.rid }}.tar.gz"
+
+      - name: 打包（Windows zip）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "out/${{ matrix.rid }}/*" -DestinationPath "ImageStudio-${{ matrix.rid }}.zip" -Force
+          Get-Item "ImageStudio-${{ matrix.rid }}.zip" | Select-Object Name, Length
+
+      - name: 校验 Linux 产物架构
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import struct, sys
+          expected = {"linux-x64": 0x3E, "linux-arm64": 0xB7}
+          rid = "${{ matrix.rid }}"
+          with open(f"out/{rid}/ImageStudio", "rb") as fh:
+              head = fh.read(64)
+          assert head[:4] == b"\x7fELF", f"不是 ELF 文件: {head[:4]!r}"
+          machine = struct.unpack("<H", head[18:20])[0]
+          print(f"{rid}: ELF e_machine = {machine:#x}")
+          assert machine == expected[rid], f"{rid} 架构不符，期望 {expected[rid]:#x}"
+          PY
+
+      - name: 冒烟测试（Linux x64 在 Xvfb 下启动 15 秒）
+        # 用 Xvfb 提供虚拟显示，程序能持续运行（超时被杀，退出码 124）即视为启动成功。
+        # 该项用于尽早发现「交叉编译成功但运行时缺原生库」的问题，失败不阻断发布。
+        if: matrix.rid == 'linux-x64'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libx11-6 libice6 libsm6 libxext6 \
+            libfontconfig1 libfreetype6 libicu-dev >/dev/null
+          Xvfb :99 -screen 0 1440x900x24 >/dev/null 2>&1 &
+          sleep 2
+          export DISPLAY=:99
+          set +e
+          timeout 15 "./out/${{ matrix.rid }}/ImageStudio"
+          code=$?
+          set -e
+          echo "退出码：$code（124 表示程序在 15 秒内一直正常运行）"
+          test "$code" -eq 124
+
+      - name: 生成 SHA256 校验和
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sha256sum "ImageStudio-${{ matrix.rid }}.tar.gz" > "ImageStudio-${{ matrix.rid }}.tar.gz.sha256"
+
+      - name: 生成 SHA256 校验和（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash "ImageStudio-${{ matrix.rid }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ImageStudio-${{ matrix.rid }}.zip" | Out-File -Encoding ascii "ImageStudio-${{ matrix.rid }}.zip.sha256"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageStudio-${{ matrix.rid }}
+          path: |
+            ImageStudio-${{ matrix.rid }}.*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 3. 打标签时汇总产物发布 Release
+  # ---------------------------------------------------------------------------
+  release:
+    name: 发布 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh dist
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ImageStudio ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## 下载
+
+            | 平台 | 文件 |
+            | --- | --- |
+            | Linux x86_64 | `ImageStudio-linux-x64.tar.gz` |
+            | Linux ARM64（树莓派、ARM 服务器） | `ImageStudio-linux-arm64.tar.gz` |
+            | Windows x64 | `ImageStudio-win-x64.zip` |
+
+            所有产物均为**自包含单文件**，目标机无需安装 .NET 运行时。
+
+            ```bash
+            # Linux 安装（安装到 ~/.local，不需要 root）
+            tar -xzf ImageStudio-linux-x64.tar.gz -C ImageStudio
+            cd ImageStudio && ./install.sh
+            ```
+
+            Linux 运行需要系统自带 `libX11`、`libICE`、`libSM`、`fontconfig`、`libicu`
+            以及一款中文字体（如 `fonts-noto-cjk`）—— 绝大多数桌面发行版默认已具备。
