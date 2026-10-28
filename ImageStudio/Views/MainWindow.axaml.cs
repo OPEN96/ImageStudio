@@ -44,6 +44,16 @@ public partial class MainWindow : Window
         _viewModel.StatusHint("平移工具：按住左键拖动画布，滚轮缩放");
     }
 
+    /// <summary>点击图层行切换当前图层。</summary>
+    private void OnLayerRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            sender is Control { DataContext: LayerItemViewModel item })
+        {
+            _viewModel.SelectLayer(item);
+        }
+    }
+
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         e.DragEffects = e.DataTransfer.Contains(DataFormat.File)

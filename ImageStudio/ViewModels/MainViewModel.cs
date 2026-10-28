@@ -44,12 +44,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
-        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _previewTimer.Tick += async (_, _) =>
         {
             _previewTimer.Stop();
             await UpdatePreviewAsync();
         };
+
+        InitLayerTimer();
     }
 
     /// <summary>由窗口在构造时注入，用于弹出文件对话框。</summary>
@@ -272,11 +274,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             ImageSource = null;
             _masterBitmap = null;
+            RefreshLayers();
             return;
         }
 
-        _masterBitmap = BitmapFactory.ToBitmap(_document.Image);
+        _masterBitmap = BitmapFactory.ToBitmap(_document.Composite());
         ImageSource = _masterBitmap;
+        RefreshLayers();
     }
 
     public void SetViewport(Size size)
@@ -305,7 +309,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (_document is null || _isBusy)
             return;
 
-        if (!HasAdjustment)
+        var layer = _document.ActiveLayer;
+
+        // 调整只作用于当前图层，因此需要把调整后的图层重新合成到图层栈中预览
+        if (!HasAdjustment || layer is null)
         {
             _previewVersion++;
             ImageSource = _masterBitmap;
@@ -313,7 +320,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         var version = ++_previewVersion;
-        var source = _document.Image;
+        var source = layer.Pixels;
+        var index = _document.ActiveIndex;
+        var document = _document;
         var b = Brightness / 100.0;
         var c = Contrast / 100.0;
         var s = Saturation / 100.0;
@@ -321,14 +330,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             var adjusted = await Task.Run(() => ImageOps.Adjust(source, b, c, s));
-            if (version != _previewVersion)
+            Image<Bgra32>? composed = null;
+
+            try
+            {
+                composed = await Task.Run(() => document.CompositeWith(index, adjusted));
+            }
+            finally
             {
                 adjusted.Dispose();
+            }
+
+            if (version != _previewVersion)
+            {
+                composed.Dispose();
                 return;
             }
 
-            ImageSource = BitmapFactory.ToBitmap(adjusted);
-            adjusted.Dispose();
+            ImageSource = BitmapFactory.ToBitmap(composed);
+            composed.Dispose();
         }
         catch (Exception ex)
         {
@@ -338,7 +358,51 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     // ------------------------------------------------------------------ 提交式操作
 
-    private async Task CommitAsync(string label, Func<Image<Bgra32>, Image<Bgra32>> operation, bool recenter = true)
+    /// <summary>对当前图层做一次可撤销的像素修改（滤镜、色彩调整）。</summary>
+    private async Task CommitLayerAsync(string label, Func<Image<Bgra32>, Image<Bgra32>> operation)
+    {
+        if (_document is null || _isBusy)
+            return;
+
+        var layer = _document.ActiveLayer;
+        if (layer is null)
+            return;
+
+        _previewTimer.Stop();
+        _previewVersion++;
+        _isBusy = true;
+        IsBusy = true;
+
+        try
+        {
+            using (_document.BeginEdit(label))
+            {
+                var source = layer.Pixels;
+                var result = await Task.Run(() => operation(source));
+                layer.ReplacePixels(result);
+            }
+
+            ResetAdjustmentSliders();
+            StatusText = label + " 已完成";
+        }
+        catch (Exception ex)
+        {
+            StatusText = label + " 失败：" + ex.Message;
+        }
+        finally
+        {
+            _isBusy = false;
+            IsBusy = false;
+            RefreshCommandStates();
+        }
+    }
+
+    /// <summary>对所有图层施加同一种几何变换（裁剪 / 旋转 / 翻转 / 缩放画布）。</summary>
+    private async Task CommitDocumentAsync(
+        string label,
+        Func<Image<Bgra32>, Image<Bgra32>> pixelOp,
+        Func<Image<L8>, Image<L8>>? maskOp,
+        bool recenter = true)
     {
         if (_document is null || _isBusy)
             return;
@@ -350,16 +414,39 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var source = _document.Image;
-            var result = await Task.Run(() => operation(source));
-            _document.Commit(label, result);
+            var layers = _document.Layers.ToList();
+            var results = await Task.Run(() => layers
+                .Select(l => (
+                    Pixels: pixelOp(l.Pixels),
+                    Mask: l.Mask is null || maskOp is null ? null : maskOp(l.Mask)))
+                .ToList());
 
-            _suspendPreview = true;
-            Brightness = 0;
-            Contrast = 0;
-            Saturation = 0;
-            _suspendPreview = false;
-            ImageSource = _masterBitmap;
+            if (results.Count == 0)
+                return;
+
+            using (_document.BeginEdit(label))
+            {
+                for (var i = 0; i < layers.Count; i++)
+                {
+                    layers[i].ReplacePixels(results[i].Pixels);
+
+                    if (layers[i].Mask is not null)
+                    {
+                        layers[i].Mask!.Dispose();
+                        layers[i].Mask = null;
+                    }
+
+                    if (results[i].Mask is not null)
+                    {
+                        layers[i].Mask = results[i].Mask;
+                        layers[i].MaskEnabled = true;
+                    }
+                }
+
+                _document.SetSize(results[0].Pixels.Width, results[0].Pixels.Height);
+            }
+
+            ResetAdjustmentSliders();
 
             if (recenter)
                 CenterImage();
@@ -376,6 +463,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
             IsBusy = false;
             RefreshCommandStates();
         }
+    }
+
+    private void ResetAdjustmentSliders()
+    {
+        _suspendPreview = true;
+        Brightness = 0;
+        Contrast = 0;
+        Saturation = 0;
+        _suspendPreview = false;
     }
 
     // ------------------------------------------------------------------ 文件命令
@@ -497,7 +593,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             IsBusy = true;
             StatusText = "正在保存 " + Path.GetFileName(path) + " …";
-            var image = _document.Image;
+            var image = _document.Composite();
             var kind = ImageCodec.KindFromPath(path);
             var quality = (int)JpegQuality;
             await Task.Run(() => ImageCodec.Save(image, path, kind, quality));
@@ -555,26 +651,38 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // ------------------------------------------------------------------ 图像命令
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task RotateClockwiseAsync() => CommitAsync("顺时针旋转 90°", img => ImageOps.RotateQuarter(img, true));
+    private Task RotateClockwiseAsync() =>
+        CommitDocumentAsync("顺时针旋转 90°",
+            img => ImageOps.RotateQuarter(img, true),
+            mask => ImageOps.RotateQuarter(mask, true));
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task RotateCounterClockwiseAsync() => CommitAsync("逆时针旋转 90°", img => ImageOps.RotateQuarter(img, false));
+    private Task RotateCounterClockwiseAsync() =>
+        CommitDocumentAsync("逆时针旋转 90°",
+            img => ImageOps.RotateQuarter(img, false),
+            mask => ImageOps.RotateQuarter(mask, false));
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task Rotate180Async() => CommitAsync("旋转 180°", ImageOps.Rotate180);
+    private Task Rotate180Async() =>
+        CommitDocumentAsync("旋转 180°", img => ImageOps.Rotate180(img), mask => ImageOps.Rotate180(mask));
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
     private async Task RotateByAngleAsync()
     {
         var angle = RotateAngle;
-        await CommitAsync($"旋转 {angle:0.#}°", img => ImageOps.RotateArbitrary(img, angle), recenter: false);
+        await CommitDocumentAsync($"旋转 {angle:0.#}°",
+            img => ImageOps.RotateArbitrary(img, angle),
+            mask => ImageOps.RotateArbitraryMask(mask, angle),
+            recenter: false);
     }
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task FlipHorizontalAsync() => CommitAsync("水平翻转", img => ImageOps.Flip(img, true));
+    private Task FlipHorizontalAsync() =>
+        CommitDocumentAsync("水平翻转", img => ImageOps.Flip(img, true), mask => ImageOps.Flip(mask, true));
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task FlipVerticalAsync() => CommitAsync("垂直翻转", img => ImageOps.Flip(img, false));
+    private Task FlipVerticalAsync() =>
+        CommitDocumentAsync("垂直翻转", img => ImageOps.Flip(img, false), mask => ImageOps.Flip(mask, false));
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
     private void BeginCrop()
@@ -611,7 +719,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return;
 
         IsCropMode = false;
-        await CommitAsync($"裁剪 {rect.Width}×{rect.Height}", img => ImageOps.Crop(img, rect));
+        await CommitDocumentAsync($"裁剪 {rect.Width}×{rect.Height}",
+            img => ImageOps.Crop(img, rect),
+            mask => ImageOps.Crop(mask, rect));
     }
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
@@ -626,7 +736,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return;
 
         var (w, h) = (dialog.ResultWidth, dialog.ResultHeight);
-        await CommitAsync($"缩放为 {w}×{h}", img => ImageOps.Resize(img, w, h));
+        await CommitDocumentAsync($"缩放为 {w}×{h}",
+            img => ImageOps.Resize(img, w, h),
+            mask => ImageOps.Resize(mask, w, h));
     }
 
     // ------------------------------------------------------------------ 调整 / 滤镜
@@ -637,7 +749,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var b = Brightness / 100.0;
         var c = Contrast / 100.0;
         var s = Saturation / 100.0;
-        await CommitAsync("调整颜色", img => ImageOps.Adjust(img, b, c, s));
+        await CommitLayerAsync("调整颜色", img => ImageOps.Adjust(img, b, c, s));
     }
 
     [RelayCommand]
@@ -653,29 +765,29 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task GrayscaleAsync() => CommitAsync("灰度", ImageOps.Grayscale);
+    private Task GrayscaleAsync() => CommitLayerAsync("灰度", ImageOps.Grayscale);
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task InvertAsync() => CommitAsync("反色", ImageOps.Invert);
+    private Task InvertAsync() => CommitLayerAsync("反色", ImageOps.Invert);
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task SepiaAsync() => CommitAsync("棕褐色", ImageOps.Sepia);
+    private Task SepiaAsync() => CommitLayerAsync("棕褐色", ImageOps.Sepia);
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
-    private Task EdgesAsync() => CommitAsync("边缘检测", ImageOps.Edges);
+    private Task EdgesAsync() => CommitLayerAsync("边缘检测", ImageOps.Edges);
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
     private async Task BlurAsync()
     {
         var radius = (float)BlurRadius;
-        await CommitAsync($"高斯模糊 {radius:0.#}px", img => ImageOps.Blur(img, radius));
+        await CommitLayerAsync($"高斯模糊 {radius:0.#}px", img => ImageOps.Blur(img, radius));
     }
 
     [RelayCommand(CanExecute = nameof(HasDocument))]
     private async Task SharpenAsync()
     {
         var amount = (float)SharpenAmount;
-        await CommitAsync($"锐化 {amount:0.#}", img => ImageOps.Sharpen(img, amount));
+        await CommitLayerAsync($"锐化 {amount:0.#}", img => ImageOps.Sharpen(img, amount));
     }
 
     // ------------------------------------------------------------------ 视图命令
@@ -767,7 +879,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IsCursorInside = true;
         CursorText = $"{x}, {y}";
 
-        var pixel = _document.Image[x, y];
+        var pixel = _document.Composite()[x, y];
         var color = Color.FromArgb(pixel.A, pixel.R, pixel.G, pixel.B);
         if (color != _lastSampleColor || string.IsNullOrEmpty(SampleText))
         {
@@ -785,12 +897,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RedoCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
         ApplyAdjustmentCommand.NotifyCanExecuteChanged();
+        NotifyLayerCommands();
         OnPropertyChanged(nameof(HasDocument));
     }
 
     public void Dispose()
     {
         _previewTimer.Stop();
+        _layerTimer.Stop();
         if (_document is not null)
             _document.Changed -= OnDocumentChanged;
         _document?.Dispose();

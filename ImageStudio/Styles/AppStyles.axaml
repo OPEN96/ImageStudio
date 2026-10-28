@@ -144,4 +144,67 @@
   <Style Selector="ToggleButton.subtle:checked PathIcon">
     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
   </Style>
+
+  <!-- 图层面板：行 -->
+  <Style Selector="Border.layerRow">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="CornerRadius" Value="6" />
+  </Style>
+  <Style Selector="Border.layerRow:pointerover">
+    <Setter Property="Background" Value="#26262E" />
+  </Style>
+  <Style Selector="Border.layerRow.selected">
+    <Setter Property="Background" Value="#2C3B55" />
+  </Style>
+
+  <!-- 图层面板：眼睛开关 -->
+  <Style Selector="ToggleButton.eye">
+    <Setter Property="Width" Value="22" />
+    <Setter Property="Height" Value="22" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="ToggleButton.eye /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style Selector="ToggleButton.eye:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#383844" />
+  </Style>
+  <Style Selector="ToggleButton.eye:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+  <Style Selector="ToggleButton.eye:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#383844" />
+  </Style>
+  <Style Selector="ToggleButton.eye PathIcon">
+    <Setter Property="Foreground" Value="#4E4E5A" />
+  </Style>
+  <Style Selector="ToggleButton.eye:checked PathIcon">
+    <Setter Property="Foreground" Value="#D8DDE8" />
+  </Style>
+
+  <!-- 图层面板：底部小按钮 -->
+  <Style Selector="Button.mini">
+    <Setter Property="Width" Value="30" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="{DynamicResource ChipBg}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="5" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.mini:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ChipHoverBg}" />
+  </Style>
+  <Style Selector="Button.mini:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#1F1F25" />
+    <Setter Property="TextBlock.Foreground" Value="#44444E" />
+  </Style>
 </Styles>

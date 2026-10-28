@@ -47,4 +47,19 @@ public static class BitmapFactory
 
         return bitmap;
     }
+
+    /// <summary>生成等比缩放到 <paramref name="maxSide"/> 以内的缩略图，用于图层列表。</summary>
+    public static WriteableBitmap ToThumbnail(Image<Bgra32> image, int maxSide = 40)
+    {
+        var scale = Math.Min(
+            (double)maxSide / Math.Max(1, image.Width),
+            (double)maxSide / Math.Max(1, image.Height));
+        scale = Math.Min(scale, 1.0);
+
+        var w = Math.Max(1, (int)Math.Round(image.Width * scale));
+        var h = Math.Max(1, (int)Math.Round(image.Height * scale));
+
+        using var scaled = ImageOps.Resize(image, w, h);
+        return ToBitmap(scaled);
+    }
 }

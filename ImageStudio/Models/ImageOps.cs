@@ -12,14 +12,16 @@ public static class ImageOps
     private static byte Clamp(double v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : (byte)Math.Round(v));
 
     // ---------------------------------------------------------------- 几何变换
+    // 以下操作为纯索引重排，写成泛型以便同时作用于 Bgra32 像素与 L8 蒙版。
 
-    public static Image<Bgra32> Crop(Image<Bgra32> src, Rectangle rect)
+    public static Image<TPixel> Crop<TPixel>(Image<TPixel> src, Rectangle rect)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         rect = Rectangle.Intersect(rect, new Rectangle(0, 0, src.Width, src.Height));
         if (rect.Width <= 0 || rect.Height <= 0)
             throw new ArgumentException("裁剪区域为空。", nameof(rect));
 
-        var dst = new Image<Bgra32>(rect.Width, rect.Height);
+        var dst = new Image<TPixel>(rect.Width, rect.Height);
         for (var y = 0; y < rect.Height; y++)
         for (var x = 0; x < rect.Width; x++)
             dst[x, y] = src[rect.X + x, rect.Y + y];
@@ -27,11 +29,12 @@ public static class ImageOps
     }
 
     /// <summary>顺时针 / 逆时针旋转 90°。</summary>
-    public static Image<Bgra32> RotateQuarter(Image<Bgra32> src, bool clockwise)
+    public static Image<TPixel> RotateQuarter<TPixel>(Image<TPixel> src, bool clockwise)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         var w = src.Width;
         var h = src.Height;
-        var dst = new Image<Bgra32>(h, w);
+        var dst = new Image<TPixel>(h, w);
         for (var y = 0; y < h; y++)
         for (var x = 0; x < w; x++)
         {
@@ -43,22 +46,24 @@ public static class ImageOps
         return dst;
     }
 
-    public static Image<Bgra32> Rotate180(Image<Bgra32> src)
+    public static Image<TPixel> Rotate180<TPixel>(Image<TPixel> src)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         var w = src.Width;
         var h = src.Height;
-        var dst = new Image<Bgra32>(w, h);
+        var dst = new Image<TPixel>(w, h);
         for (var y = 0; y < h; y++)
         for (var x = 0; x < w; x++)
             dst[w - 1 - x, h - 1 - y] = src[x, y];
         return dst;
     }
 
-    public static Image<Bgra32> Flip(Image<Bgra32> src, bool horizontal)
+    public static Image<TPixel> Flip<TPixel>(Image<TPixel> src, bool horizontal)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         var w = src.Width;
         var h = src.Height;
-        var dst = new Image<Bgra32>(w, h);
+        var dst = new Image<TPixel>(w, h);
         for (var y = 0; y < h; y++)
         for (var x = 0; x < w; x++)
         {
@@ -128,12 +133,46 @@ public static class ImageOps
         return Pixel(Clamp(r), Clamp(g), Clamp(b), Clamp(a));
     }
 
-    public static Image<Bgra32> Resize(Image<Bgra32> src, int width, int height)
+    /// <summary>蒙版用的任意角度旋转（最近邻，输出尺寸与像素旋转严格一致）。</summary>
+    public static Image<L8> RotateArbitraryMask(Image<L8> src, double degrees)
+    {
+        var rad = degrees * Math.PI / 180.0;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+
+        var w = src.Width;
+        var h = src.Height;
+        var nw = Math.Max(1, (int)Math.Ceiling(Math.Abs(w * cos) + Math.Abs(h * sin)));
+        var nh = Math.Max(1, (int)Math.Ceiling(Math.Abs(w * sin) + Math.Abs(h * cos)));
+
+        var dst = new Image<L8>(nw, nh);
+        var cx = (w - 1) / 2.0;
+        var cy = (h - 1) / 2.0;
+        var ncx = (nw - 1) / 2.0;
+        var ncy = (nh - 1) / 2.0;
+
+        for (var y2 = 0; y2 < nh; y2++)
+        for (var x2 = 0; x2 < nw; x2++)
+        {
+            var dx = x2 - ncx;
+            var dy = y2 - ncy;
+            var sx = (int)Math.Round(cos * dx + sin * dy + cx);
+            var sy = (int)Math.Round(-sin * dx + cos * dy + cy);
+
+            dst[x2, y2] = sx < 0 || sy < 0 || sx >= w || sy >= h
+                ? new L8(0)
+                : src[sx, sy];
+        }
+
+        return dst;
+    }
+
+    public static Image<TPixel> Resize<TPixel>(Image<TPixel> src, int width, int height)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
-        var clone = src.Clone(ctx => ctx.Resize(width, height, KnownResamplers.Lanczos3));
-        return clone;
+        return src.Clone(ctx => ctx.Resize(width, height, KnownResamplers.Lanczos3));
     }
 
     // ---------------------------------------------------------------- 色彩调整
