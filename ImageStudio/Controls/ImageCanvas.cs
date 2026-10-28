@@ -20,7 +20,12 @@ public enum CanvasTool
     SelectRect,
     SelectEllipse,
     Lasso,
-    Wand
+    Wand,
+    Brush,
+    Eraser,
+    Bucket,
+    Gradient,
+    Text
 }
 
 public sealed class CanvasPointerEventArgs(Point imagePosition, bool isInside) : EventArgs
@@ -45,6 +50,19 @@ public sealed class WandPickEventArgs(Point position, KeyModifiers modifiers) : 
 {
     public Point Position { get; } = position;
     public KeyModifiers Modifiers { get; } = modifiers;
+}
+
+/// <summary>绘制类工具的落点（图像像素坐标，可能略超出画布）。</summary>
+public sealed class PaintEventArgs(Point position) : EventArgs
+{
+    public Point Position { get; } = position;
+}
+
+/// <summary>渐变拖拽的起止点（图像像素坐标）。</summary>
+public sealed class GradientEventArgs(Point start, Point end) : EventArgs
+{
+    public Point Start { get; } = start;
+    public Point End { get; } = end;
 }
 
 /// <summary>
@@ -83,6 +101,16 @@ public class ImageCanvas : Control
     public static readonly StyledProperty<bool> ShowSelectionProperty =
         AvaloniaProperty.Register<ImageCanvas, bool>(nameof(ShowSelection), true);
 
+    public static readonly StyledProperty<double> BrushSizeProperty =
+        AvaloniaProperty.Register<ImageCanvas, double>(nameof(BrushSize), 24);
+
+    /// <summary>
+    /// 位图内容版本号。复用同一张位图刷新像素时，<see cref="Source"/> 引用不变，
+    /// 靠这个计数器触发重绘。
+    /// </summary>
+    public static readonly StyledProperty<int> SourceVersionProperty =
+        AvaloniaProperty.Register<ImageCanvas, int>(nameof(SourceVersion));
+
     private static readonly IBrush CanvasBackground = new SolidColorBrush(Color.Parse("#151519"));
     private static readonly IPen ImageBorderPen = new Pen(new SolidColorBrush(Color.Parse("#3D3D47")), 1);
     private static readonly IPen CropPen = new Pen(Brushes.White, 1.2);
@@ -96,8 +124,15 @@ public class ImageCanvas : Control
     private static readonly IPen PreviewPen = new Pen(Brushes.White, 1.1);
     private static readonly IPen PreviewUnderPen = new Pen(new SolidColorBrush(Color.Parse("#101014")), 1.9);
 
+    private static readonly IPen BrushCursorPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), 1);
+    private static readonly IPen BrushCursorUnderPen =
+        new Pen(new SolidColorBrush(Color.FromArgb(170, 0, 0, 0)), 2.4);
+    private static readonly IPen GradientPen = new Pen(Brushes.White, 1.3, new DashStyle([5, 4], 0));
+    private static readonly IPen GradientUnderPen = new Pen(new SolidColorBrush(Color.Parse("#101014")), 2.6);
+
     private static readonly Cursor CrossCursor = new(StandardCursorType.Cross);
     private static readonly Cursor MoveCursor = new(StandardCursorType.SizeAll);
+    private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
 
     private static ImageBrush? _checkerBrush;
 
@@ -114,6 +149,12 @@ public class ImageCanvas : Control
     private List<Point>? _lassoPoints;
     private double _antsPhase;
 
+    private bool _isPainting;
+    private Point? _hover;
+    private bool _isGradientDragging;
+    private Point _gradientStart;
+    private Point _gradientCurrent;
+
     private WriteableBitmap? _tintBitmap;
     private Selection? _tintSource;
 
@@ -121,7 +162,8 @@ public class ImageCanvas : Control
     {
         AffectsRender<ImageCanvas>(
             SourceProperty, ZoomProperty, OffsetProperty, ShowCheckerboardProperty,
-            ToolProperty, CropRectProperty, SelectionProperty, ShowSelectionProperty);
+            ToolProperty, CropRectProperty, SelectionProperty, ShowSelectionProperty,
+            BrushSizeProperty, SourceVersionProperty);
         FocusableProperty.OverrideDefaultValue<ImageCanvas>(true);
         ClipToBoundsProperty.OverrideDefaultValue<ImageCanvas>(true);
     }
@@ -186,6 +228,19 @@ public class ImageCanvas : Control
         set => SetValue(ShowSelectionProperty, value);
     }
 
+    /// <summary>画笔直径（图像像素），用于绘制圆形光标。</summary>
+    public double BrushSize
+    {
+        get => GetValue(BrushSizeProperty);
+        set => SetValue(BrushSizeProperty, value);
+    }
+
+    public int SourceVersion
+    {
+        get => GetValue(SourceVersionProperty);
+        set => SetValue(SourceVersionProperty, value);
+    }
+
     public event EventHandler<CanvasPointerEventArgs>? PointerImageMoved;
 
     public event EventHandler<SelectionRectEventArgs>? RectSelectionCompleted;
@@ -193,6 +248,24 @@ public class ImageCanvas : Control
     public event EventHandler<SelectionPathEventArgs>? LassoSelectionCompleted;
 
     public event EventHandler<WandPickEventArgs>? WandPickRequested;
+
+    /// <summary>画笔 / 橡皮按下。</summary>
+    public event EventHandler<PaintEventArgs>? PaintStarted;
+
+    /// <summary>画笔 / 橡皮拖动。</summary>
+    public event EventHandler<PaintEventArgs>? PaintMoved;
+
+    /// <summary>画笔 / 橡皮抬起。</summary>
+    public event EventHandler? PaintEnded;
+
+    /// <summary>油漆桶点击。</summary>
+    public event EventHandler<WandPickEventArgs>? BucketPickRequested;
+
+    /// <summary>渐变拖拽结束。</summary>
+    public event EventHandler<GradientEventArgs>? GradientCompleted;
+
+    /// <summary>文字工具点击。</summary>
+    public event EventHandler<PaintEventArgs>? TextRequested;
 
     // ------------------------------------------------------------------ 尺寸换算
 
@@ -251,6 +324,42 @@ public class ImageCanvas : Control
             DrawCropOverlay(context, dest);
 
         DrawSelectionDragPreview(context);
+        DrawGradientPreview(context);
+        DrawBrushCursor(context);
+    }
+
+    /// <summary>画笔直径的圆形光标，缩放时跟随缩放。</summary>
+    private void DrawBrushCursor(DrawingContext context)
+    {
+        if (!IsPaintTool || _hover is not { } hover)
+            return;
+
+        var radius = Math.Clamp(BrushSize / 2 * Zoom, 1.5, 4000);
+        context.DrawEllipse(null, BrushCursorUnderPen, hover, radius, radius);
+        context.DrawEllipse(null, BrushCursorPen, hover, radius, radius);
+
+        if (radius > 9)
+        {
+            var arm = radius > 24 ? 5.0 : 3.0;
+            context.DrawLine(BrushCursorUnderPen,
+                new Point(hover.X - arm, hover.Y), new Point(hover.X + arm, hover.Y));
+            context.DrawLine(BrushCursorUnderPen,
+                new Point(hover.X, hover.Y - arm), new Point(hover.X, hover.Y + arm));
+        }
+    }
+
+    private void DrawGradientPreview(DrawingContext context)
+    {
+        if (!_isGradientDragging)
+            return;
+
+        context.DrawLine(GradientUnderPen, _gradientStart, _gradientCurrent);
+        context.DrawLine(GradientPen, _gradientStart, _gradientCurrent);
+
+        const double r = 4;
+        context.DrawEllipse(null, GradientUnderPen, _gradientStart, r + 1, r + 1);
+        context.DrawEllipse(Brushes.White, GradientUnderPen, _gradientStart, r, r);
+        context.DrawEllipse(Brushes.White, GradientUnderPen, _gradientCurrent, r, r);
     }
 
     private void DrawSelection(DrawingContext context, Rect imageRect)
@@ -533,11 +642,27 @@ public class ImageCanvas : Control
 
         if (change.Property == ToolProperty)
         {
-            Cursor = Tool == CanvasTool.Pan ? MoveCursor : CrossCursor;
+            Cursor = Tool switch
+            {
+                CanvasTool.Pan => MoveCursor,
+                CanvasTool.Text => TextCursor,
+                _ => CrossCursor
+            };
+
             if (Tool != CanvasTool.Crop)
                 _isCropping = false;
+
+            // 切换工具时收尾未完成的笔画，避免状态泄漏
+            if (_isPainting)
+            {
+                _isPainting = false;
+                PaintEnded?.Invoke(this, EventArgs.Empty);
+            }
+
             _isSelectDragging = false;
             _lassoPoints = null;
+            _isGradientDragging = false;
+            _hover = null;
             InvalidateVisual();
         }
         else if (change.Property == SelectionProperty || change.Property == ShowSelectionProperty)
@@ -549,6 +674,8 @@ public class ImageCanvas : Control
 
     private bool IsSelectionTool => Tool is CanvasTool.SelectRect or CanvasTool.SelectEllipse
         or CanvasTool.Lasso or CanvasTool.Wand;
+
+    private bool IsPaintTool => Tool is CanvasTool.Brush or CanvasTool.Eraser;
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -573,7 +700,7 @@ public class ImageCanvas : Control
         e.Handled = true;
     }
 
-    /// <summary>开始一次拖动（裁剪 / 矩形选区 / 椭圆选区 / 套索 / 魔棒点击）。</summary>
+    /// <summary>开始一次拖动（裁剪 / 选区 / 套索 / 魔棒 / 画笔 / 渐变）。</summary>
     private bool BeginDrag(Point position, KeyModifiers modifiers)
     {
         if (Source is null)
@@ -604,6 +731,28 @@ public class ImageCanvas : Control
                 WandPickRequested?.Invoke(this, new WandPickEventArgs(ToImage(position), modifiers));
                 break;
 
+            case CanvasTool.Brush:
+            case CanvasTool.Eraser:
+                // 画笔不从画布边缘钳制，允许从外侧画入
+                _hover = position;
+                _isPainting = true;
+                PaintStarted?.Invoke(this, new PaintEventArgs(ToImage(position)));
+                break;
+
+            case CanvasTool.Bucket:
+                BucketPickRequested?.Invoke(this, new WandPickEventArgs(ToImage(position), modifiers));
+                break;
+
+            case CanvasTool.Gradient:
+                _gradientStart = position;
+                _gradientCurrent = position;
+                _isGradientDragging = true;
+                break;
+
+            case CanvasTool.Text:
+                TextRequested?.Invoke(this, new PaintEventArgs(ToImage(position)));
+                break;
+
             default:
                 return false;
         }
@@ -613,7 +762,7 @@ public class ImageCanvas : Control
     }
 
     /// <summary>拖动过程中持续调用。</summary>
-    private void UpdateDrag(Point position)
+    private void UpdateDrag(Point position, KeyModifiers modifiers)
     {
         if (_isCropping)
         {
@@ -627,6 +776,29 @@ public class ImageCanvas : Control
         else if (_isSelectDragging)
         {
             _selectCurrent = ClampToImage(ToImage(position));
+            InvalidateVisual();
+        }
+        else if (_isPainting)
+        {
+            _hover = position;
+            PaintMoved?.Invoke(this, new PaintEventArgs(ToImage(position)));
+            InvalidateVisual();
+        }
+        else if (_isGradientDragging)
+        {
+            var current = position;
+
+            // 按住 Shift 约束为水平 / 垂直，方便画规整的渐变
+            if (modifiers.HasFlag(KeyModifiers.Shift))
+            {
+                var dx = current.X - _gradientStart.X;
+                var dy = current.Y - _gradientStart.Y;
+                current = Math.Abs(dx) >= Math.Abs(dy)
+                    ? new Point(current.X, _gradientStart.Y)
+                    : new Point(_gradientStart.X, current.Y);
+            }
+
+            _gradientCurrent = current;
             InvalidateVisual();
         }
         else if (_lassoPoints is not null)
@@ -647,6 +819,26 @@ public class ImageCanvas : Control
         if (_isCropping)
         {
             _isCropping = false;
+            return;
+        }
+
+        if (_isPainting)
+        {
+            _isPainting = false;
+            PaintEnded?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        if (_isGradientDragging)
+        {
+            _isGradientDragging = false;
+            var start = ToImage(_gradientStart);
+            var end = ToImage(_gradientCurrent);
+            InvalidateVisual();
+
+            if (Distance(_gradientStart, _gradientCurrent) >= 2)
+                GradientCompleted?.Invoke(this, new GradientEventArgs(start, end));
+
             return;
         }
 
@@ -698,7 +890,13 @@ public class ImageCanvas : Control
         }
         else
         {
-            UpdateDrag(position);
+            UpdateDrag(position, e.KeyModifiers);
+        }
+
+        if (IsPaintTool && !_isPainting)
+        {
+            _hover = position;
+            InvalidateVisual();
         }
 
         var imagePoint = ToImage(position);
@@ -743,6 +941,8 @@ public class ImageCanvas : Control
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
+        _hover = null;
+        InvalidateVisual();
         PointerImageMoved?.Invoke(this, new CanvasPointerEventArgs(default, false));
     }
 

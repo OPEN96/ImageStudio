@@ -30,6 +30,19 @@ public partial class MainWindow : Window
         Canvas.WandPickRequested += async (_, e) => await GuardedAsync(
             () => _viewModel.OnWandPickAsync(e.Position, e.Modifiers));
 
+        Canvas.PaintStarted += (_, e) => _viewModel.OnPaintStart(e.Position);
+        Canvas.PaintMoved += (_, e) => _viewModel.OnPaintMove(e.Position);
+        Canvas.PaintEnded += (_, _) => _viewModel.OnPaintEnd();
+
+        Canvas.BucketPickRequested += async (_, e) => await GuardedAsync(
+            () => _viewModel.OnBucketAsync(e.Position));
+
+        Canvas.GradientCompleted += async (_, e) => await GuardedAsync(
+            () => _viewModel.OnGradientAsync(e.Start, e.End));
+
+        Canvas.TextRequested += async (_, e) => await GuardedAsync(
+            () => _viewModel.OnTextAsync(e.Position));
+
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
         Closing += (_, _) => _viewModel.Dispose();
@@ -86,6 +99,21 @@ public partial class MainWindow : Window
     private void OnWandToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _viewModel.SetTool(CanvasTool.Wand);
 
+    private void OnBrushToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Brush);
+
+    private void OnEraserToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Eraser);
+
+    private void OnBucketToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Bucket);
+
+    private void OnGradientToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Gradient);
+
+    private void OnTextToolClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetTool(CanvasTool.Text);
+
     private void OnModeReplaceClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _viewModel.SetSelectionMode(SelectionCombine.Replace);
 
@@ -97,6 +125,12 @@ public partial class MainWindow : Window
 
     private void OnModeIntersectClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _viewModel.SetSelectionMode(SelectionCombine.Intersect);
+
+    private void OnLinearGradientClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetGradientKind(true);
+
+    private void OnRadialGradientClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _viewModel.SetGradientKind(false);
 
     /// <summary>点击图层行切换当前图层。</summary>
     private void OnLayerRowPressed(object? sender, PointerPressedEventArgs e)
@@ -158,6 +192,50 @@ public partial class MainWindow : Window
             _viewModel.DeleteSelectionContentCommand.Execute(null);
             e.Handled = true;
             return;
+        }
+
+        // 无修饰键：工具切换与笔刷尺寸
+        if (e.KeyModifiers == KeyModifiers.None)
+        {
+            switch (e.Key)
+            {
+                case Key.B:
+                    _viewModel.SetTool(CanvasTool.Brush);
+                    e.Handled = true;
+                    return;
+                case Key.E:
+                    _viewModel.SetTool(CanvasTool.Eraser);
+                    e.Handled = true;
+                    return;
+                case Key.G:
+                    _viewModel.SetTool(CanvasTool.Gradient);
+                    e.Handled = true;
+                    return;
+                case Key.P:
+                    _viewModel.SetTool(CanvasTool.Bucket);
+                    e.Handled = true;
+                    return;
+                case Key.T:
+                    _viewModel.SetTool(CanvasTool.Text);
+                    e.Handled = true;
+                    return;
+                case Key.M:
+                    _viewModel.SetTool(CanvasTool.SelectRect);
+                    e.Handled = true;
+                    return;
+                case Key.X:
+                    _viewModel.SwapColorsCommand.Execute(null);
+                    e.Handled = true;
+                    return;
+                case Key.OemOpenBrackets:
+                    _viewModel.AdjustBrushSize(1 / 1.25);
+                    e.Handled = true;
+                    return;
+                case Key.OemCloseBrackets:
+                    _viewModel.AdjustBrushSize(1.25);
+                    e.Handled = true;
+                    return;
+            }
         }
 
         if (e.KeyModifiers == KeyModifiers.Control)

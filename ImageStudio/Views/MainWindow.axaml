@@ -123,6 +123,8 @@
             <MenuItem Header="快捷键：Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Z 撤销" IsEnabled="False" />
             <MenuItem Header="图层：Ctrl+Shift+N 新建 / Ctrl+J 复制 / Ctrl+E 合并向下" IsEnabled="False" />
             <MenuItem Header="选区：Ctrl+A 全选 / Ctrl+D 取消 / Delete 删除内容 / Esc 取消" IsEnabled="False" />
+            <MenuItem Header="绘画：B 画笔 / E 橡皮 / P 油漆桶 / G 渐变 / T 文字" IsEnabled="False" />
+            <MenuItem Header="笔刷：[ ] 缩放大小 · X 交换前景 / 背景 · 纯色填充即油漆桶" IsEnabled="False" />
             <MenuItem Header="滚轮缩放 · 左键拖动平移 · 选区工具下拖动即框选" IsEnabled="False" />
           </MenuItem>
         </Menu>
@@ -268,6 +270,33 @@
 
           <Rectangle Height="1" Width="22" Margin="0,6" Fill="{StaticResource LineBrush}" />
 
+          <ToggleButton Classes="rail" ToolTip.Tip="画笔 (B)" IsChecked="{Binding IsBrushTool, Mode=OneWay}"
+                        Click="OnBrushToolClick">
+            <PathIcon Width="19" Height="19"
+                      Data="M7,14c-1.66,0 -3,1.34 -3,3 0,1.31 -1.16,2 -2,2 0.92,1.22 2.49,2 4,2 2.21,0 4,-1.79 4,-4 0,-1.66 -1.34,-3 -3,-3zM20.71,4.63l-1.34,-1.34c-0.59,-0.59 -1.54,-0.59 -2.12,0L9,11.55l3.45,3.45 8.26,-8.25c0.59,-0.59 0.59,-1.54 0,-2.12z" />
+          </ToggleButton>
+          <ToggleButton Classes="rail" ToolTip.Tip="橡皮擦 (E)" IsChecked="{Binding IsEraserTool, Mode=OneWay}"
+                        Click="OnEraserToolClick">
+            <PathIcon Width="19" Height="19"
+                      Data="M16.24,3.56L21.19,8.5c0.78,0.78 0.78,2.05 0,2.83L12,20.5H5.5l-2.91,-2.91c-0.78,-0.78 -0.78,-2.05 0,-2.83L13.41,3.56c0.78,-0.78 2.05,-0.78 2.83,0zM6.03,13.05l-2.44,2.44c-0.39,0.39 -0.39,1.02 0,1.41l2.09,2.09H10l4.06,-4.06 -4.24,-4.24 -3.79,3.79z" />
+          </ToggleButton>
+          <ToggleButton Classes="rail" ToolTip.Tip="油漆桶 (P)" IsChecked="{Binding IsBucketTool, Mode=OneWay}"
+                        Click="OnBucketToolClick">
+            <PathIcon Width="19" Height="19"
+                      Data="M16.56,8.94L7.62,0 6.21,1.41l2.38,2.38 -5.15,5.15c-0.59,0.59 -0.59,1.54 0,2.12l5.5,5.5c0.29,0.29 0.68,0.44 1.06,0.44s0.77,-0.15 1.06,-0.44l5.5,-5.5c0.59,-0.58 0.59,-1.53 0,-2.12zM5.21,10L10,5.21 14.79,10H5.21zM19,11.5s-2,2.17 -2,3.5c0,1.1 0.9,2 2,2s2,-0.9 2,-2c0,-1.33 -2,-3.5 -2,-3.5z" />
+          </ToggleButton>
+          <ToggleButton Classes="rail" ToolTip.Tip="渐变 (G)" IsChecked="{Binding IsGradientTool, Mode=OneWay}"
+                        Click="OnGradientToolClick">
+            <PathIcon Width="19" Height="19"
+                      Data="M11,9h2V6h-2V9zM11,13h2v-3h-2V13zM11,21h2v-3h-2V21zM11,17h2v-3h-2V17zM7,9h2V6H7V9zM7,13h2v-3H7V13zM7,21h2v-3H7V21zM7,17h2v-3H7V17zM3,13h2v-3H3V13zM3,21h2v-3H3V21zM3,17h2v-3H3V17zM3,9h2V6H3V9zM19,3v18h2V3H19zM15,9h2V6h-2V9zM15,13h2v-3h-2V13zM15,21h2v-3h-2V21zM15,17h2v-3h-2V17z" />
+          </ToggleButton>
+          <ToggleButton Classes="rail" ToolTip.Tip="文字 (T)" IsChecked="{Binding IsTextTool, Mode=OneWay}"
+                        Click="OnTextToolClick">
+            <PathIcon Width="19" Height="19" Data="M5,4v3h5.5v12h3V7H19V4z" />
+          </ToggleButton>
+
+          <Rectangle Height="1" Width="22" Margin="0,6" Fill="{StaticResource LineBrush}" />
+
           <ToggleButton Classes="rail subtle" ToolTip.Tip="棋盘格背景" IsChecked="{Binding ShowCheckerboard, Mode=TwoWay}">
             <PathIcon Width="17" Height="17" Data="M3,3h8v8H3V3zM13,13h8v8h-8v-8z" />
           </ToggleButton>
@@ -279,6 +308,8 @@
         <controls:ImageCanvas x:Name="Canvas"
                               Margin="0"
                               Source="{Binding ImageSource}"
+                              SourceVersion="{Binding SourceVersion}"
+                              BrushSize="{Binding BrushSize}"
                               Zoom="{Binding Zoom}"
                               Offset="{Binding Offset}"
                               ShowCheckerboard="{Binding ShowCheckerboard}"
@@ -410,6 +441,95 @@
                 </StackPanel>
               </Border>
 
+              <!-- 绘制类工具提示 -->
+              <Border Background="#232A38" CornerRadius="8" Padding="12,9"
+                      IsVisible="{Binding IsPaintToolActive}">
+                <TextBlock Text="{Binding ActiveToolHint}" Classes="hint" Foreground="#C6D2EA" />
+              </Border>
+
+              <!-- 绘画 -->
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="绘画" Classes="section" />
+                <TextBlock Grid.Column="1" Text="{Binding ActiveLayerName}" Classes="value" />
+              </Grid>
+
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <Border Grid.Column="0" Width="24" Height="24" CornerRadius="4" Background="{Binding FillBrush}"
+                        BorderBrush="#66FFFFFF" BorderThickness="1" VerticalAlignment="Center"
+                        ToolTip.Tip="前景色" />
+                <TextBox Grid.Column="1" Text="{Binding FillHex, Mode=TwoWay}" FontSize="11"
+                         Height="26" MinHeight="26" Padding="6,0" VerticalContentAlignment="Center"
+                         ToolTip.Tip="前景色 #RRGGBB" />
+                <Button Grid.Column="2" Classes="chip" Content="X" Width="32"
+                        Command="{Binding SwapColorsCommand}" ToolTip.Tip="交换前景 / 背景 (X)" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <Border Grid.Column="0" Width="24" Height="24" CornerRadius="4" Background="{Binding BackBrush}"
+                        BorderBrush="#66FFFFFF" BorderThickness="1" VerticalAlignment="Center"
+                        ToolTip.Tip="背景色" />
+                <TextBox Grid.Column="1" Text="{Binding BackHex, Mode=TwoWay}" FontSize="11"
+                         Height="26" MinHeight="26" Padding="6,0" VerticalContentAlignment="Center"
+                         ToolTip.Tip="背景色 #RRGGBB" />
+                <TextBlock Grid.Column="2" Text="背景" Classes="value" />
+              </Grid>
+
+              <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="笔刷大小" Classes="label" />
+                  <TextBlock Grid.Column="1" Classes="value" Text="{Binding BrushSizeText}" />
+                </Grid>
+                <Slider Minimum="1" Maximum="200" Value="{Binding BrushSize}" />
+              </StackPanel>
+              <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="硬度" Classes="label" />
+                  <TextBlock Grid.Column="1" Classes="value" Text="{Binding BrushHardnessText}" />
+                </Grid>
+                <Slider Minimum="0" Maximum="100" Value="{Binding BrushHardness}" />
+              </StackPanel>
+              <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="不透明度" Classes="label" />
+                  <TextBlock Grid.Column="1" Classes="value" Text="{Binding BrushOpacityText}" />
+                </Grid>
+                <Slider Minimum="1" Maximum="100" Value="{Binding BrushOpacity}" />
+              </StackPanel>
+
+              <StackPanel Spacing="4" IsVisible="{Binding IsBucketTool}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="填充容差" Classes="label" />
+                  <TextBlock Grid.Column="1" Classes="value"
+                             Text="{Binding BucketTolerance, StringFormat={}{0:0}}" />
+                </Grid>
+                <Slider Minimum="0" Maximum="255" Value="{Binding BucketTolerance}" />
+                <CheckBox Content="仅填充连续区域" FontSize="11" MinHeight="24"
+                          IsChecked="{Binding BucketContiguous, Mode=TwoWay}" />
+              </StackPanel>
+
+              <StackPanel Spacing="6" IsVisible="{Binding IsGradientTool}">
+                <Grid ColumnDefinitions="*,4,*">
+                  <ToggleButton Grid.Column="0" Classes="seg" Content="线性"
+                                IsChecked="{Binding IsLinearGradient, Mode=OneWay}" Click="OnLinearGradientClick" />
+                  <ToggleButton Grid.Column="2" Classes="seg" Content="径向"
+                                IsChecked="{Binding IsRadialGradient, Mode=OneWay}" Click="OnRadialGradientClick" />
+                </Grid>
+                <CheckBox Content="渐变到透明（否则到背景色）" FontSize="11" MinHeight="24"
+                          IsChecked="{Binding GradientToTransparent, Mode=TwoWay}" />
+              </StackPanel>
+
+              <StackPanel Spacing="4" IsVisible="{Binding IsTextTool}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="字号" Classes="label" />
+                  <TextBlock Grid.Column="1" Classes="value"
+                             Text="{Binding TextFontSize, StringFormat={}{0:0} px}" />
+                </Grid>
+                <Slider Minimum="8" Maximum="300" Value="{Binding TextFontSize}" />
+                <CheckBox Content="粗体" FontSize="11" MinHeight="24" IsChecked="{Binding TextBold, Mode=TwoWay}" />
+                <Button Classes="chip" Content="添加文字…" Command="{Binding AddTextCommand}" />
+              </StackPanel>
+
+              <Rectangle Height="1" Fill="{StaticResource LineBrush}" Margin="0,4" />
+
               <!-- 选区工具提示 -->
               <Border Background="#232A38" CornerRadius="8" Padding="12,9"
                       IsVisible="{Binding IsSelectionToolActive}">
@@ -472,13 +592,7 @@
                         Command="{Binding DeleteSelectionContentCommand}" />
                 <Button Grid.Column="2" Classes="chip" Content="填充" Command="{Binding FillSelectionCommand}" />
               </Grid>
-              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                <Border Width="22" Height="22" CornerRadius="4" Background="{Binding FillBrush}"
-                        BorderBrush="#55FFFFFF" BorderThickness="1" VerticalAlignment="Center" />
-                <TextBox Grid.Column="1" Text="{Binding FillHex, Mode=TwoWay}" FontSize="11"
-                         Height="26" MinHeight="26" Padding="6,0" VerticalContentAlignment="Center" />
-                <TextBlock Grid.Column="2" Text="填充色" Classes="value" />
-              </Grid>
+              <TextBlock Text="填充与渐变使用上方的前景色" Classes="hint" />
 
               <Rectangle Height="1" Fill="{StaticResource LineBrush}" Margin="0,4" />
 

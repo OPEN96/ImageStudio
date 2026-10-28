@@ -512,6 +512,159 @@ selDoc.Dispose();
 blocks.Dispose();
 gradientImg.Dispose();
 
+// ---------------------------------------------------------------- 绘画
+Console.WriteLine("\n[画笔]");
+var brushCanvas = SolidImage(64, 64, 255, 255, 255);
+var brushColor = new Bgra32 { R = 220, G = 40, B = 40, A = 255 };
+
+Check("笔刷覆盖率：中心为 1", StrokeSession.DabCoverage(0, 10, 1) == 1);
+Check("笔刷覆盖率：半径外为 0", StrokeSession.DabCoverage(10, 10, 1) == 0);
+Check("笔刷覆盖率：软边中间约为 0.5", Math.Abs(StrokeSession.DabCoverage(5, 10, 0) - 0.5) < 0.01,
+    StrokeSession.DabCoverage(5, 10, 0).ToString("0.00"));
+
+using (var stroke = new StrokeSession(brushCanvas, new BrushSettings { Size = 10, Hardness = 1 }, brushColor))
+{
+    stroke.MoveTo(32, 32);
+
+    Check("硬边画笔落笔即中心实色",
+        stroke.Pixels[32, 32].R == 220 && stroke.Pixels[32, 32].G == 40,
+        $"{stroke.Pixels[32, 32].R},{stroke.Pixels[32, 32].G}");
+    Check("笔刷边界外像素不变", stroke.Pixels[40, 32].R == 255, stroke.Pixels[40, 32].R.ToString());
+    Check("笔刷边缘有抗锯齿",
+        stroke.Pixels[35, 32].R is > 40 and < 255, stroke.Pixels[35, 32].R.ToString());
+    Check("笔画不影响原图", brushCanvas[32, 32].R == 255);
+    Check("落笔后 HasPaint 为真", stroke.HasPaint);
+}
+
+using (var stroke = new StrokeSession(brushCanvas, new BrushSettings { Size = 24, Hardness = 0, Opacity = 0.5 }, brushColor))
+{
+    stroke.MoveTo(32, 32);
+
+    Check("半透明画笔混合到中值",
+        Math.Abs(stroke.Pixels[32, 32].R - 238) <= 2 && Math.Abs(stroke.Pixels[32, 32].G - 148) <= 2,
+        $"{stroke.Pixels[32, 32].R},{stroke.Pixels[32, 32].G}");
+
+    stroke.MoveTo(32, 32);
+    stroke.MoveTo(40, 32);
+    stroke.MoveTo(32, 32);
+    Check("同一笔内重复涂抹不会加深",
+        Math.Abs(stroke.Pixels[32, 32].R - 238) <= 2, stroke.Pixels[32, 32].R.ToString());
+}
+
+using (var stroke = new StrokeSession(brushCanvas, new BrushSettings { Size = 20, Hardness = 0 }, brushColor))
+{
+    stroke.MoveTo(10, 10);
+    stroke.MoveTo(50, 10);
+
+    var middle = stroke.Pixels[30, 10];
+    Check("快速拖动时笔迹连续", middle.R > 215, middle.R.ToString());
+}
+
+using (var eraser = new StrokeSession(SolidImage(64, 64, 200, 30, 30), new BrushSettings { Size = 16, Hardness = 1, Erase = true }, default))
+{
+    eraser.MoveTo(32, 32);
+    Check("橡皮擦清空透明度", eraser.Pixels[32, 32].A == 0, eraser.Pixels[32, 32].A.ToString());
+    Check("橡皮擦保留边缘", eraser.Pixels[0, 0].A == 255);
+}
+
+var clipHalf = Selection.FromRect(64, 64, new Rectangle(0, 0, 32, 64));
+using (var stroke = new StrokeSession(brushCanvas, new BrushSettings { Size = 12, Hardness = 1 }, brushColor, clipHalf))
+{
+    stroke.MoveTo(20, 32);
+    stroke.MoveTo(44, 32);
+
+    Check("画笔受选区限制：选区内上色", stroke.Pixels[20, 32].R == 220);
+    Check("画笔受选区限制：选区外不变", stroke.Pixels[44, 32].R == 255, stroke.Pixels[44, 32].R.ToString());
+}
+
+using (var stroke = new StrokeSession(brushCanvas, new BrushSettings { Size = 8 }, brushColor))
+{
+    stroke.MoveTo(-200, -200);
+    stroke.MoveTo(-190, -190);
+    Check("画布外落笔不越界", brushCanvas[0, 0].R == 255);
+    Check("画布外落笔不产生内容", !stroke.HasPaint);
+}
+
+using (var stroke = new StrokeSession(SolidImage(20, 20, 0, 0, 0), new BrushSettings { Size = 60 }, brushColor))
+{
+    stroke.MoveTo(10, 10);
+    Check("笔刷大于画布仍可整片覆盖", stroke.Pixels[0, 0].R == 220);
+}
+
+Console.WriteLine("\n[油漆桶]");
+var bucketSource = new Image<Bgra32>(60, 30);
+bucketSource.ProcessPixelRows(accessor =>
+{
+    for (var y = 0; y < accessor.Height; y++)
+        accessor.GetRowSpan(y).Fill(new Bgra32 { R = 255, G = 255, B = 255, A = 255 });
+});
+bucketSource.ProcessPixelRows(accessor =>
+{
+    for (var y = 4; y < 20; y++)
+    {
+        var row = accessor.GetRowSpan(y);
+        for (var x = 4; x < 24; x++)
+            row[x] = new Bgra32 { R = 200, G = 20, B = 20, A = 255 };
+    }
+});
+
+var green = new Bgra32 { R = 20, G = 200, B = 90, A = 255 };
+using (var bucketTarget = SolidImage(60, 30, 255, 255, 255))
+using (var filled = PaintOps.BucketFill(bucketTarget, bucketSource, null, 10, 10, 10, true, green))
+{
+    Check("油漆桶填充内部颜色", filled[10, 10].G == 200 && filled[10, 10].R == 20,
+        $"{filled[10, 10].R},{filled[10, 10].G}");
+    Check("油漆桶不越过边界", filled[2, 2].R == 255);
+    Check("油漆桶不填充画布外区域", filled[40, 25].R == 255);
+}
+
+using (var bucketTarget = SolidImage(60, 30, 255, 255, 255))
+using (var filled = PaintOps.BucketFill(bucketTarget, bucketSource,
+           Selection.FromRect(60, 30, new Rectangle(0, 0, 12, 30)), 10, 10, 10, true, green))
+{
+    Check("油漆桶受选区裁剪", filled[6, 10].G == 200 && filled[18, 10].R == 255,
+        $"{filled[6, 10].G}/{filled[18, 10].R}");
+}
+
+using (var bucketTarget = SolidImage(60, 30, 255, 255, 255))
+using (var unchanged = PaintOps.BucketFill(bucketTarget, bucketSource, null, -5, -5, 10, true, green))
+    Check("油漆桶越界种子点不修改图像", unchanged[10, 10].G == 255);
+
+Console.WriteLine("\n[渐变]");
+var gradientBase = SolidImage(100, 10, 0, 0, 0);
+var white = new Bgra32 { R = 255, G = 255, B = 255, A = 255 };
+var transparentWhite = new Bgra32 { R = 255, G = 255, B = 255, A = 0 };
+
+using (var linear = PaintOps.Gradient(gradientBase, null, 0, 5, 100, 5, white, transparentWhite, GradientKind.Linear))
+{
+    Check("线性渐变起点接近前景色", linear[0, 5].R > 250, linear[0, 5].R.ToString());
+    Check("线性渐变中点为半透明混合", Math.Abs(linear[50, 5].R - 127) <= 2, linear[50, 5].R.ToString());
+    Check("线性渐变终点保持原样", linear[99, 5].R <= 2, linear[99, 5].R.ToString());
+}
+
+using (var radial = PaintOps.Gradient(gradientBase, null, 50, 5, 80, 5, white, transparentWhite, GradientKind.Radial))
+{
+    Check("径向渐变中心最亮", radial[50, 5].R > 245, radial[50, 5].R.ToString());
+    Check("径向渐变外围淡出", radial[95, 5].R < 40, radial[95, 5].R.ToString());
+    Check("径向渐变半径外不过度扩散", radial[50, 9].R < radial[50, 5].R);
+}
+
+using (var clipped = PaintOps.Gradient(gradientBase,
+           Selection.FromRect(100, 10, new Rectangle(50, 0, 50, 10)),
+           0, 5, 100, 5, white, white, GradientKind.Linear))
+{
+    Check("渐变受选区限制", clipped[10, 5].R == 0 && clipped[75, 5].R > 200,
+        $"{clipped[10, 5].R}/{clipped[75, 5].R}");
+}
+
+var blue = new Bgra32 { R = 0, G = 0, B = 255, A = 255 };
+using (var toBackground = PaintOps.Gradient(gradientBase, null, 0, 5, 100, 5, white, blue, GradientKind.Linear))
+    Check("渐变到背景色", toBackground[99, 5].B > 240 && toBackground[99, 5].R < 20,
+        $"{toBackground[99, 5].R},{toBackground[99, 5].B}");
+
+using (var zero = PaintOps.Gradient(gradientBase, null, 20, 20, 20, 20, white, blue, GradientKind.Linear))
+    Check("零长度渐变不修改图像", zero[50, 5].R == 0);
+
 Console.WriteLine($"\n结果: {passed} 通过, {failed} 失败");
 return failed == 0 ? 0 : 1;
 

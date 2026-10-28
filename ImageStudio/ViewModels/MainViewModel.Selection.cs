@@ -51,6 +51,11 @@ public partial class MainViewModel
         CanvasTool.SelectEllipse => "拖动框选 · Shift 添加 · Alt 减去 · 单击取消",
         CanvasTool.Lasso => "按住左键描绘轮廓，松开自动闭合",
         CanvasTool.Wand => "点击选取相近颜色，可调整容差",
+        CanvasTool.Brush => "按住左键涂抹 · [ ] 调整笔刷大小 · X 交换前后景",
+        CanvasTool.Eraser => "按住左键擦除为透明 · [ ] 调整笔刷大小",
+        CanvasTool.Bucket => "点击以填充相近颜色区域，可调整容差",
+        CanvasTool.Gradient => "从起点拖到终点铺开渐变，Shift 可画水平/垂直线",
+        CanvasTool.Text => "点击画布输入文字，生成独立文字图层",
         _ => "按住左键拖动画布，滚轮缩放"
     };
 
@@ -68,6 +73,7 @@ public partial class MainViewModel
         OnPropertyChanged(nameof(IsCropMode));
         OnPropertyChanged(nameof(ActiveToolHint));
         OnPropertyChanged(nameof(CropText));
+        NotifyPaintToolState();
     }
 
     public void SetTool(CanvasTool tool)
@@ -150,18 +156,11 @@ public partial class MainViewModel
 
     partial void OnFillHexChanged(string value)
     {
-        if (_syncingColor)
-            return;
-
-        var text = value.Trim().TrimStart('#');
-        if (text.Length == 3)
-            text = string.Concat(text.Select(c => new string(c, 2)));
-
-        if (text.Length != 6 || !uint.TryParse(text, System.Globalization.NumberStyles.HexNumber, null, out var rgb))
+        if (_syncingColor || !TryParseHex(value, out var color))
             return;
 
         _syncingColor = true;
-        FillColor = Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+        FillColor = color;
         _syncingColor = false;
     }
 

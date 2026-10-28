@@ -78,6 +78,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial bool ShowCheckerboard { get; set; } = true;
 
+    /// <summary>位图内容版本号：复用同一张位图时用它触发画布重绘。</summary>
+    [ObservableProperty]
+    public partial int SourceVersion { get; set; }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CropText))]
     public partial Rect CropRect { get; set; }
@@ -942,6 +946,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RedoCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
         ApplyAdjustmentCommand.NotifyCanExecuteChanged();
+        AddTextCommand.NotifyCanExecuteChanged();
         NotifyLayerCommands();
         NotifySelectionCommands();
         OnPropertyChanged(nameof(HasDocument));
@@ -951,6 +956,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         _previewTimer.Stop();
         _layerTimer.Stop();
+        _stroke?.Dispose();
+        _stroke = null;
+        _previewBitmap?.Dispose();
+        _previewBitmap = null;
         if (_document is not null)
             _document.Changed -= OnDocumentChanged;
         _document?.Dispose();
