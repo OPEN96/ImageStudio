@@ -1,0 +1,46 @@
+# ---- .NET 构建产物 ----
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.pdb
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ---- Rider / Visual Studio / VS Code ----
+.vs/
+.idea/
+.vscode/
+*.sln.DotSettings.user
+
+# ---- 测试与发布产物 ----
+TestResults/
+publish/
+*.binlog
+
+# ---- 系统文件 ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---- 工具与临时文件 ----
+.workbuddy/
+_probe/
+_refl/
+shot*.png
+crop_*.png
+*.tmp
+*.log
