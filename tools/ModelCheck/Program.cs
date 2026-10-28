@@ -334,6 +334,184 @@ stacked.Dispose();
 orderDoc.Dispose();
 luminanceDoc.Dispose();
 
+
+// ---------------------------------------------------------------- 选区
+Console.WriteLine("\n[选区形状]");
+var selRect = Selection.FromRect(100, 80, new Rectangle(10, 20, 30, 40));
+Check("矩形选区尺寸", selRect.Width == 100 && selRect.Height == 80);
+Check("矩形选区外接框",
+    selRect.Bounds.X == 10 && selRect.Bounds.Y == 20 && selRect.Bounds.Width == 30 && selRect.Bounds.Height == 40,
+    selRect.Bounds.ToString());
+Check("矩形选区像素数", selRect.InsidePixelCount == 30 * 40, selRect.InsidePixelCount.ToString());
+Check("矩形选区边界为硬边",
+    selRect.Coverage[20 * 100 + 10] == 255 && selRect.Coverage[19 * 100 + 10] == 0 &&
+    selRect.Coverage[0] == 0);
+
+var clippedSel = Selection.FromRect(50, 50, new Rectangle(-10, 40, 30, 30));
+Check("越界矩形被裁剪", clippedSel.InsidePixelCount == 20 * 10, clippedSel.InsidePixelCount.ToString());
+
+var selEllipse = Selection.FromEllipse(100, 100, new Rectangle(0, 0, 100, 100));
+Check("椭圆四角未选中", selEllipse.Coverage[0] == 0 && selEllipse.Coverage[99] == 0);
+Check("椭圆中心选中", selEllipse.Coverage[50 * 100 + 50] == 255);
+Check("椭圆面积接近 π/4", selEllipse.InsidePixelCount is > 7600 and < 7900,
+    selEllipse.InsidePixelCount.ToString());
+
+var selTriangle = Selection.FromPolygon(100, 100, [(10f, 10f), (90f, 10f), (10f, 90f)]);
+Check("三角形面积接近一半", selTriangle.InsidePixelCount is > 3000 and < 3400,
+    selTriangle.InsidePixelCount.ToString());
+Check("多边形外的点为 0", selTriangle.Coverage[80 * 100 + 80] == 0);
+
+Console.WriteLine("\n[选区组合]");
+var selLeft = Selection.FromRect(100, 100, new Rectangle(0, 0, 50, 100));
+var selRight = Selection.FromRect(100, 100, new Rectangle(50, 0, 50, 100));
+Check("添加模式合并", selLeft.Combine(selRight, SelectionCombine.Add).InsidePixelCount == 10000);
+
+var overlapA = Selection.FromRect(100, 100, new Rectangle(0, 0, 60, 60));
+var overlapB = Selection.FromRect(100, 100, new Rectangle(40, 40, 60, 60));
+Check("交集只保留重叠", overlapA.Combine(overlapB, SelectionCombine.Intersect).InsidePixelCount == 400,
+    overlapA.Combine(overlapB, SelectionCombine.Intersect).InsidePixelCount.ToString());
+Check("减去移除重叠", overlapA.Combine(overlapB, SelectionCombine.Subtract).InsidePixelCount == 3200,
+    overlapA.Combine(overlapB, SelectionCombine.Subtract).InsidePixelCount.ToString());
+Check("反选得到补集", selLeft.Invert().InsidePixelCount == 5000);
+Check("替换模式直接取新选区",
+    selLeft.Combine(selRight, SelectionCombine.Replace).InsidePixelCount == 5000);
+
+Console.WriteLine("\n[羽化]");
+var hardSel = Selection.FromRect(60, 60, new Rectangle(20, 20, 20, 20));
+var softSel = hardSel.Feather(6);
+Check("羽化后中心仍为全选", softSel.Coverage[30 * 60 + 30] == 255);
+Check("羽化后边界为半透明", softSel.Coverage[30 * 60 + 20] is > 0 and < 255,
+    softSel.Coverage[30 * 60 + 20].ToString());
+Check("羽化扩展覆盖范围", softSel.Bounds.Width > hardSel.Bounds.Width,
+    $"{hardSel.Bounds.Width} -> {softSel.Bounds.Width}");
+Check("羽化不修改原选区", hardSel.Coverage[30 * 60 + 20] == 255);
+Check("零半径羽化保持原样", hardSel.Feather(0).Coverage[30 * 60 + 20] == 255);
+
+Console.WriteLine("\n[魔棒]");
+var blocks = new Image<Bgra32>(80, 40);
+blocks.ProcessPixelRows(accessor =>
+{
+    for (var y = 0; y < accessor.Height; y++)
+        accessor.GetRowSpan(y).Fill(new Bgra32 { R = 255, G = 255, B = 255, A = 255 });
+});
+
+void PaintBlock(int x0, int y0, int w, int h)
+{
+    var block = new Bgra32 { R = 220, G = 30, B = 40, A = 255 };
+    blocks.ProcessPixelRows(accessor =>
+    {
+        for (var y = y0; y < y0 + h; y++)
+        {
+            var row = accessor.GetRowSpan(y);
+            for (var x = x0; x < x0 + w; x++)
+                row[x] = block;
+        }
+    });
+}
+
+PaintBlock(5, 5, 16, 16);
+PaintBlock(55, 5, 16, 16);
+
+var wandOne = Selection.Wand(blocks, 10, 10, 10, true);
+Check("连续魔棒只选中一块", wandOne.InsidePixelCount == 256, wandOne.InsidePixelCount.ToString());
+
+var wandAll = Selection.Wand(blocks, 10, 10, 10, false);
+Check("非连续魔棒选中全部同色", wandAll.InsidePixelCount == 512, wandAll.InsidePixelCount.ToString());
+
+var wandOutside = Selection.Wand(blocks, -3, 5, 20, true);
+Check("越界种子返回空选区", wandOutside.IsEmpty);
+
+var gradientImg = new Image<Bgra32>(200, 8);
+gradientImg.ProcessPixelRows(accessor =>
+{
+    for (var y = 0; y < accessor.Height; y++)
+    {
+        var row = accessor.GetRowSpan(y);
+        for (var x = 0; x < 200; x++)
+        {
+            var v = (byte)(x * 255 / 199);
+            row[x] = new Bgra32 { R = v, G = v, B = v, A = 255 };
+        }
+    }
+});
+
+var narrowWand = Selection.Wand(gradientImg, 100, 4, 5, true);
+var wideWand = Selection.Wand(gradientImg, 100, 4, 40, true);
+Check("容差越大选区越大", wideWand.InsidePixelCount > narrowWand.InsidePixelCount,
+    $"{narrowWand.InsidePixelCount} -> {wideWand.InsidePixelCount}");
+
+Console.WriteLine("\n[选区轮廓]");
+var outlineSel = Selection.FromRect(20, 20, new Rectangle(4, 4, 10, 10));
+var outline = outlineSel.GetOutline();
+Check("矩形轮廓是一条闭合线", outline is { Count: 1 });
+Check("轮廓简化为四个角", outline is [{ Length: 4 }], outline?[0].Length.ToString());
+
+var outlineCorners = outline?[0] ?? [];
+Check("轮廓坐标贴住选区边角",
+    outlineCorners.Any(p => p is { X: 4, Y: 4 }) && outlineCorners.Any(p => p is { X: 14, Y: 14 }),
+    string.Join(" ", outlineCorners));
+Check("空选区没有轮廓", Selection.Empty(10, 10).GetOutline() is { Count: 0 });
+
+Console.WriteLine("\n[选区参与像素操作]");
+var strip = SolidImage(4, 1, 100, 100, 100);
+var rightHalf = Selection.FromRect(4, 1, new Rectangle(2, 0, 2, 1));
+var brighterStrip = SolidImage(4, 1, 200, 200, 200);
+
+using (var blended = ImageOps.BlendByMask(strip, brighterStrip, rightHalf))
+    Check("混合只作用在选区内", blended[0, 0].R == 100 && blended[3, 0].R == 200,
+        $"{blended[0, 0].R}/{blended[3, 0].R}");
+
+using (var cleared = ImageOps.ClearByMask(strip, rightHalf))
+    Check("删除选区内容只清空选区内", cleared[0, 0].A == 255 && cleared[3, 0].A == 0,
+        $"{cleared[0, 0].A}/{cleared[3, 0].A}");
+
+using (var filled = ImageOps.FillByMask(strip, rightHalf, new Bgra32 { R = 255, G = 0, B = 0, A = 255 }))
+    Check("填充只作用在选区内",
+        filled[0, 0].R == 100 && filled[3, 0].R == 255 && filled[3, 0].B == 0);
+
+using (var extracted = ImageOps.ExtractByMask(strip, rightHalf))
+    Check("提取选区得到透明底图",
+        extracted[0, 0].A == 0 && extracted[3, 0].A == 255 && extracted[3, 0].R == 100);
+
+var halfCoverage = Selection.FromCoverage(4, 1, [0, 0, 128, 255]);
+using (var mixed = ImageOps.BlendByMask(strip, brighterStrip, halfCoverage))
+    Check("半覆盖按比例混合", Math.Abs(mixed[2, 0].R - 150) <= 1, mixed[2, 0].R.ToString());
+
+Console.WriteLine("\n[选区跟随画布变换]");
+var movingSel = Selection.FromRect(100, 100, new Rectangle(10, 10, 50, 50));
+var croppedSelection = movingSel.Crop(new Rectangle(20, 20, 30, 30));
+Check("选区跟随裁剪", croppedSelection.Width == 30 && croppedSelection.InsidePixelCount == 900,
+    croppedSelection.InsidePixelCount.ToString());
+
+using (var rotatedMask = ImageOps.RotateQuarter(movingSel.ToMask(), true))
+{
+    var rotatedSelection = Selection.FromMask(rotatedMask);
+    Check("选区跟随旋转",
+        rotatedSelection.Bounds.X == 40 && rotatedSelection.Bounds.Y == 10 &&
+        rotatedSelection.Bounds.Width == 50 && rotatedSelection.Bounds.Height == 50,
+        rotatedSelection.Bounds.ToString());
+}
+
+var scaledSelection = movingSel.ScaleTo(200, 200);
+Check("选区跟随缩放", scaledSelection.Width == 200 && scaledSelection.InsidePixelCount > 9000,
+    scaledSelection.InsidePixelCount.ToString());
+
+Console.WriteLine("\n[选区与文档]");
+var selDoc = new ImageDocument(SolidImage(64, 64, 10, 20, 30));
+var maskFromSelection = Selection.FromRect(64, 64, new Rectangle(0, 0, 32, 64));
+selDoc.SetMaskFromSelection(0, maskFromSelection);
+Check("选区可生成图层蒙版", selDoc.Layers[0].HasMask && selDoc.Layers[0].MaskEnabled);
+Check("蒙版内部为白色", selDoc.Layers[0].Mask![4, 4].PackedValue == 255);
+Check("蒙版外部为黑色", selDoc.Layers[0].Mask![60, 4].PackedValue == 0);
+
+var copyPixels = ImageOps.ExtractByMask(selDoc.Layers[0].Pixels, Selection.FromRect(64, 64, new Rectangle(0, 0, 10, 10)));
+selDoc.AddLayerFromPixels("拷贝", copyPixels);
+Check("通过拷贝建立图层", selDoc.LayerCount == 2 && selDoc.ActiveIndex == 1);
+Check("拷贝图层内容正确", selDoc.Layers[1].Pixels[5, 5].A == 255 && selDoc.Layers[1].Pixels[50, 50].A == 0);
+selDoc.Dispose();
+blocks.Dispose();
+gradientImg.Dispose();
+
 Console.WriteLine($"\n结果: {passed} 通过, {failed} 失败");
 return failed == 0 ? 0 : 1;
 

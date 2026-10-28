@@ -145,6 +145,45 @@
     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
   </Style>
 
+  <!-- 分段按钮（选区模式） -->
+  <Style Selector="ToggleButton.seg">
+    <Setter Property="Background" Value="{DynamicResource ChipBg}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="5" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="ToggleButton.seg /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style Selector="ToggleButton.seg:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ChipHoverBg}" />
+  </Style>
+  <Style Selector="ToggleButton.seg:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+
+  <!-- 输入框 -->
+  <Style Selector="TextBox">
+    <Setter Property="Background" Value="#1C1C22" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}" />
+    <Setter Property="CornerRadius" Value="5" />
+  </Style>
+
+  <!-- 复选框 -->
+  <Style Selector="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+  </Style>
+
   <!-- 图层面板：行 -->
   <Style Selector="Border.layerRow">
     <Setter Property="Background" Value="Transparent" />

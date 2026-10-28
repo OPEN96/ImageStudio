@@ -7,8 +7,21 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Threading;
+using ImageStudio.Models;
 
 namespace ImageStudio.Controls;
+
+/// <summary>画布当前的操作工具。</summary>
+public enum CanvasTool
+{
+    Pan,
+    Crop,
+    SelectRect,
+    SelectEllipse,
+    Lasso,
+    Wand
+}
 
 public sealed class CanvasPointerEventArgs(Point imagePosition, bool isInside) : EventArgs
 {
@@ -16,8 +29,26 @@ public sealed class CanvasPointerEventArgs(Point imagePosition, bool isInside) :
     public bool IsInside { get; } = isInside;
 }
 
+public sealed class SelectionRectEventArgs(Rect rect, KeyModifiers modifiers) : EventArgs
+{
+    public Rect Rect { get; } = rect;
+    public KeyModifiers Modifiers { get; } = modifiers;
+}
+
+public sealed class SelectionPathEventArgs(IReadOnlyList<Point> points, KeyModifiers modifiers) : EventArgs
+{
+    public IReadOnlyList<Point> Points { get; } = points;
+    public KeyModifiers Modifiers { get; } = modifiers;
+}
+
+public sealed class WandPickEventArgs(Point position, KeyModifiers modifiers) : EventArgs
+{
+    public Point Position { get; } = position;
+    public KeyModifiers Modifiers { get; } = modifiers;
+}
+
 /// <summary>
-/// 图像显示区：负责棋盘格背景、缩放、平移、裁剪框交互。
+/// 图像显示区：棋盘格背景、缩放、平移、裁剪框与选区交互。
 /// </summary>
 public class ImageCanvas : Control
 {
@@ -38,12 +69,19 @@ public class ImageCanvas : Control
     public static readonly StyledProperty<bool> ShowCheckerboardProperty =
         AvaloniaProperty.Register<ImageCanvas, bool>(nameof(ShowCheckerboard), true);
 
-    public static readonly StyledProperty<bool> IsCropModeProperty =
-        AvaloniaProperty.Register<ImageCanvas, bool>(nameof(IsCropMode));
+    public static readonly StyledProperty<CanvasTool> ToolProperty =
+        AvaloniaProperty.Register<ImageCanvas, CanvasTool>(
+            nameof(Tool), CanvasTool.Pan, defaultBindingMode: BindingMode.TwoWay);
 
     public static readonly StyledProperty<Rect> CropRectProperty =
         AvaloniaProperty.Register<ImageCanvas, Rect>(
             nameof(CropRect), default, defaultBindingMode: BindingMode.TwoWay);
+
+    public static readonly StyledProperty<Selection?> SelectionProperty =
+        AvaloniaProperty.Register<ImageCanvas, Selection?>(nameof(Selection));
+
+    public static readonly StyledProperty<bool> ShowSelectionProperty =
+        AvaloniaProperty.Register<ImageCanvas, bool>(nameof(ShowSelection), true);
 
     private static readonly IBrush CanvasBackground = new SolidColorBrush(Color.Parse("#151519"));
     private static readonly IPen ImageBorderPen = new Pen(new SolidColorBrush(Color.Parse("#3D3D47")), 1);
@@ -54,21 +92,36 @@ public class ImageCanvas : Control
     private static readonly IPen HandlePen = new Pen(new SolidColorBrush(Color.Parse("#111114")), 1);
     private static readonly IBrush HintBrush = new SolidColorBrush(Color.Parse("#6E6E7A"));
 
+    private static readonly IPen AntsUnderPen = new Pen(new SolidColorBrush(Color.Parse("#101014")), 1.7);
+    private static readonly IPen PreviewPen = new Pen(Brushes.White, 1.1);
+    private static readonly IPen PreviewUnderPen = new Pen(new SolidColorBrush(Color.Parse("#101014")), 1.9);
+
     private static readonly Cursor CrossCursor = new(StandardCursorType.Cross);
     private static readonly Cursor MoveCursor = new(StandardCursorType.SizeAll);
 
     private static ImageBrush? _checkerBrush;
+
+    private readonly DispatcherTimer _antsTimer;
 
     private bool _isPanning;
     private bool _isCropping;
     private Point _lastPointer;
     private Point _cropAnchor;
 
+    private bool _isSelectDragging;
+    private Point _selectAnchor;
+    private Point _selectCurrent;
+    private List<Point>? _lassoPoints;
+    private double _antsPhase;
+
+    private WriteableBitmap? _tintBitmap;
+    private Selection? _tintSource;
+
     static ImageCanvas()
     {
         AffectsRender<ImageCanvas>(
-            SourceProperty, ZoomProperty, OffsetProperty,
-            ShowCheckerboardProperty, IsCropModeProperty, CropRectProperty);
+            SourceProperty, ZoomProperty, OffsetProperty, ShowCheckerboardProperty,
+            ToolProperty, CropRectProperty, SelectionProperty, ShowSelectionProperty);
         FocusableProperty.OverrideDefaultValue<ImageCanvas>(true);
         ClipToBoundsProperty.OverrideDefaultValue<ImageCanvas>(true);
     }
@@ -76,6 +129,13 @@ public class ImageCanvas : Control
     public ImageCanvas()
     {
         Cursor = MoveCursor;
+
+        _antsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
+        _antsTimer.Tick += (_, _) =>
+        {
+            _antsPhase = (_antsPhase + 1) % 8;
+            InvalidateVisual();
+        };
     }
 
     public Bitmap? Source
@@ -102,10 +162,10 @@ public class ImageCanvas : Control
         set => SetValue(ShowCheckerboardProperty, value);
     }
 
-    public bool IsCropMode
+    public CanvasTool Tool
     {
-        get => GetValue(IsCropModeProperty);
-        set => SetValue(IsCropModeProperty, value);
+        get => GetValue(ToolProperty);
+        set => SetValue(ToolProperty, value);
     }
 
     public Rect CropRect
@@ -114,7 +174,25 @@ public class ImageCanvas : Control
         set => SetValue(CropRectProperty, value);
     }
 
+    public Selection? Selection
+    {
+        get => GetValue(SelectionProperty);
+        set => SetValue(SelectionProperty, value);
+    }
+
+    public bool ShowSelection
+    {
+        get => GetValue(ShowSelectionProperty);
+        set => SetValue(ShowSelectionProperty, value);
+    }
+
     public event EventHandler<CanvasPointerEventArgs>? PointerImageMoved;
+
+    public event EventHandler<SelectionRectEventArgs>? RectSelectionCompleted;
+
+    public event EventHandler<SelectionPathEventArgs>? LassoSelectionCompleted;
+
+    public event EventHandler<WandPickEventArgs>? WandPickRequested;
 
     // ------------------------------------------------------------------ 尺寸换算
 
@@ -128,6 +206,10 @@ public class ImageCanvas : Control
     public Point ToImage(Point screen) => new(
         Zoom <= 0 ? 0 : (screen.X - Offset.X) / Zoom,
         Zoom <= 0 ? 0 : (screen.Y - Offset.Y) / Zoom);
+
+    private Point ToScreen(Point image) => new(
+        Offset.X + image.X * Zoom,
+        Offset.Y + image.Y * Zoom);
 
     private Point ClampToImage(Point img)
     {
@@ -162,8 +244,142 @@ public class ImageCanvas : Control
 
         context.DrawRectangle(null, ImageBorderPen, dest);
 
-        if (IsCropMode)
+        if (ShowSelection)
+            DrawSelection(context, dest);
+
+        if (Tool == CanvasTool.Crop)
             DrawCropOverlay(context, dest);
+
+        DrawSelectionDragPreview(context);
+    }
+
+    private void DrawSelection(DrawingContext context, Rect imageRect)
+    {
+        if (Selection is not { } selection || selection.IsEmpty)
+            return;
+
+        var tint = GetTintBitmap(selection);
+        if (tint is not null)
+        {
+            using (context.PushClip(imageRect))
+                context.DrawImage(tint, new Rect(tint.Size), imageRect);
+        }
+
+        if (selection.GetOutline() is not { Count: > 0 } outline)
+            return;
+
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
+        {
+            foreach (var loop in outline)
+            {
+                if (loop.Length < 2)
+                    continue;
+
+                ctx.BeginFigure(ToScreen(new Point(loop[0].X, loop[0].Y)), isFilled: false);
+                for (var i = 1; i < loop.Length; i++)
+                    ctx.LineTo(ToScreen(new Point(loop[i].X, loop[i].Y)));
+                ctx.EndFigure(true);
+            }
+        }
+
+        context.DrawGeometry(null, AntsUnderPen, geometry);
+        context.DrawGeometry(null, AntsPen, geometry);
+    }
+
+    private IPen AntsPen => new Pen(
+        Brushes.White, 1.1,
+        new DashStyle([4, 4], _antsPhase));
+
+    private void DrawSelectionDragPreview(DrawingContext context)
+    {
+        if (_isSelectDragging)
+        {
+            var rect = ScreenRect(_selectAnchor, _selectCurrent);
+
+            if (Tool == CanvasTool.SelectEllipse)
+            {
+                var geometry = new EllipseGeometry(rect);
+                context.DrawGeometry(null, PreviewUnderPen, geometry);
+                context.DrawGeometry(null, PreviewPen, geometry);
+            }
+            else
+            {
+                context.DrawRectangle(null, PreviewUnderPen, rect);
+                context.DrawRectangle(null, PreviewPen, rect);
+            }
+
+            return;
+        }
+
+        if (_lassoPoints is { Count: > 2 })
+        {
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                ctx.BeginFigure(_lassoPoints[0], isFilled: false);
+                for (var i = 1; i < _lassoPoints.Count; i++)
+                    ctx.LineTo(_lassoPoints[i]);
+                ctx.EndFigure(false);
+            }
+
+            context.DrawGeometry(null, PreviewUnderPen, geometry);
+            context.DrawGeometry(null, PreviewPen, geometry);
+        }
+    }
+
+    private Rect ScreenRect(Point a, Point b) => new(
+        Math.Min(a.X, b.X),
+        Math.Min(a.Y, b.Y),
+        Math.Abs(a.X - b.X),
+        Math.Abs(a.Y - b.Y));
+
+    private WriteableBitmap? GetTintBitmap(Selection selection)
+    {
+        if (ReferenceEquals(_tintSource, selection))
+            return _tintBitmap;
+
+        _tintBitmap?.Dispose();
+        _tintBitmap = null;
+        _tintSource = selection;
+
+        var width = selection.Width;
+        var height = selection.Height;
+        if (width <= 0 || height <= 0 || (long)width * height > 24_000_000)
+            return null;
+
+        var bitmap = new WriteableBitmap(
+            new PixelSize(width, height), new Vector(96, 96),
+            PixelFormat.Bgra8888, AlphaFormat.Premul);
+
+        var buffer = new byte[width * height * 4];
+        var coverage = selection.Coverage;
+
+        // 选区着色：蓝紫色半透明，按覆盖度衰减
+        const int maxAlpha = 62;
+        for (var i = 0; i < coverage.Length; i++)
+        {
+            var c = coverage[i];
+            if (c == 0)
+                continue;
+
+            var alpha = c * maxAlpha / 255;
+            var offset = i * 4;
+            buffer[offset] = (byte)(0xFF * alpha / 255);
+            buffer[offset + 1] = (byte)(0x7A * alpha / 255);
+            buffer[offset + 2] = (byte)(0x36 * alpha / 255);
+            buffer[offset + 3] = (byte)alpha;
+        }
+
+        using (var frame = bitmap.Lock())
+        {
+            var rowBytes = width * 4;
+            for (var y = 0; y < height; y++)
+                Marshal.Copy(buffer, y * rowBytes, frame.Address + y * frame.RowBytes, rowBytes);
+        }
+
+        _tintBitmap = bitmap;
+        return bitmap;
     }
 
     private void DrawCropOverlay(DrawingContext context, Rect imageRect)
@@ -287,12 +503,52 @@ public class ImageCanvas : Control
         Zoom = newZoom;
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        UpdateAntsTimer();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        _antsTimer.Stop();
+        _tintBitmap?.Dispose();
+        _tintBitmap = null;
+        _tintSource = null;
+    }
+
+    private void UpdateAntsTimer()
+    {
+        var shouldRun = Selection is { IsEmpty: false } && ShowSelection;
+        if (shouldRun && !_antsTimer.IsEnabled)
+            _antsTimer.Start();
+        else if (!shouldRun && _antsTimer.IsEnabled)
+            _antsTimer.Stop();
+    }
+
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == IsCropModeProperty)
-            Cursor = IsCropMode ? CrossCursor : MoveCursor;
+
+        if (change.Property == ToolProperty)
+        {
+            Cursor = Tool == CanvasTool.Pan ? MoveCursor : CrossCursor;
+            if (Tool != CanvasTool.Crop)
+                _isCropping = false;
+            _isSelectDragging = false;
+            _lassoPoints = null;
+            InvalidateVisual();
+        }
+        else if (change.Property == SelectionProperty || change.Property == ShowSelectionProperty)
+        {
+            UpdateAntsTimer();
+            InvalidateVisual();
+        }
     }
+
+    private bool IsSelectionTool => Tool is CanvasTool.SelectRect or CanvasTool.SelectEllipse
+        or CanvasTool.Lasso or CanvasTool.Wand;
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -303,21 +559,130 @@ public class ImageCanvas : Control
         var position = point.Position;
 
         if (point.Properties.IsMiddleButtonPressed ||
-            (point.Properties.IsLeftButtonPressed && !IsCropMode))
+            (point.Properties.IsLeftButtonPressed && Tool == CanvasTool.Pan))
         {
             _isPanning = true;
             _lastPointer = position;
-            Cursor = MoveCursor;
         }
-        else if (point.Properties.IsLeftButtonPressed && IsCropMode && Source is not null)
+        else if (point.Properties.IsLeftButtonPressed)
         {
-            _cropAnchor = ClampToImage(ToImage(position));
-            CropRect = new Rect(_cropAnchor, _cropAnchor);
-            _isCropping = true;
+            BeginDrag(position, e.KeyModifiers);
         }
 
         e.Pointer.Capture(this);
         e.Handled = true;
+    }
+
+    /// <summary>开始一次拖动（裁剪 / 矩形选区 / 椭圆选区 / 套索 / 魔棒点击）。</summary>
+    private bool BeginDrag(Point position, KeyModifiers modifiers)
+    {
+        if (Source is null)
+            return false;
+
+        var image = ClampToImage(ToImage(position));
+
+        switch (Tool)
+        {
+            case CanvasTool.Crop:
+                _cropAnchor = image;
+                CropRect = new Rect(_cropAnchor, _cropAnchor);
+                _isCropping = true;
+                break;
+
+            case CanvasTool.SelectRect:
+            case CanvasTool.SelectEllipse:
+                _selectAnchor = image;
+                _selectCurrent = image;
+                _isSelectDragging = true;
+                break;
+
+            case CanvasTool.Lasso:
+                _lassoPoints = [ClampToScreen(position)];
+                break;
+
+            case CanvasTool.Wand:
+                WandPickRequested?.Invoke(this, new WandPickEventArgs(ToImage(position), modifiers));
+                break;
+
+            default:
+                return false;
+        }
+
+        InvalidateVisual();
+        return true;
+    }
+
+    /// <summary>拖动过程中持续调用。</summary>
+    private void UpdateDrag(Point position)
+    {
+        if (_isCropping)
+        {
+            var current = ClampToImage(ToImage(position));
+            CropRect = new Rect(
+                Math.Min(_cropAnchor.X, current.X),
+                Math.Min(_cropAnchor.Y, current.Y),
+                Math.Abs(current.X - _cropAnchor.X),
+                Math.Abs(current.Y - _cropAnchor.Y));
+        }
+        else if (_isSelectDragging)
+        {
+            _selectCurrent = ClampToImage(ToImage(position));
+            InvalidateVisual();
+        }
+        else if (_lassoPoints is not null)
+        {
+            var last = _lassoPoints[^1];
+            var minDistance = Math.Max(0.75, 1.5 / Math.Max(Zoom, 0.05));
+            if (Distance(last, ClampToScreen(position)) >= minDistance)
+            {
+                _lassoPoints.Add(ClampToScreen(position));
+                InvalidateVisual();
+            }
+        }
+    }
+
+    /// <summary>结束拖动并抛出选区完成事件。</summary>
+    private void EndDrag(KeyModifiers modifiers)
+    {
+        if (_isCropping)
+        {
+            _isCropping = false;
+            return;
+        }
+
+        if (_isSelectDragging)
+        {
+            _isSelectDragging = false;
+
+            var imageRect = new Rect(
+                Math.Min(_selectAnchor.X, _selectCurrent.X),
+                Math.Min(_selectAnchor.Y, _selectCurrent.Y),
+                Math.Abs(_selectCurrent.X - _selectAnchor.X),
+                Math.Abs(_selectCurrent.Y - _selectAnchor.Y));
+
+            InvalidateVisual();
+
+            RectSelectionCompleted?.Invoke(this, new SelectionRectEventArgs(
+                imageRect.Width >= 0.5 && imageRect.Height >= 0.5 ? imageRect : default,
+                modifiers));
+            return;
+        }
+
+        if (_lassoPoints is not { } points)
+            return;
+
+        _lassoPoints = null;
+        InvalidateVisual();
+
+        if (points.Count >= 3)
+        {
+            var imagePoints = points.Select(ToImage).ToArray();
+            LassoSelectionCompleted?.Invoke(this, new SelectionPathEventArgs(imagePoints, modifiers));
+        }
+        else
+        {
+            LassoSelectionCompleted?.Invoke(this, new SelectionPathEventArgs([], modifiers));
+        }
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
@@ -331,14 +696,9 @@ public class ImageCanvas : Control
             Offset += position - _lastPointer;
             _lastPointer = position;
         }
-        else if (_isCropping && Source is not null)
+        else
         {
-            var current = ClampToImage(ToImage(position));
-            CropRect = new Rect(
-                Math.Min(_cropAnchor.X, current.X),
-                Math.Min(_cropAnchor.Y, current.Y),
-                Math.Abs(current.X - _cropAnchor.X),
-                Math.Abs(current.Y - _cropAnchor.Y));
+            UpdateDrag(position);
         }
 
         var imagePoint = ToImage(position);
@@ -349,11 +709,34 @@ public class ImageCanvas : Control
         PointerImageMoved?.Invoke(this, new CanvasPointerEventArgs(imagePoint, inside));
     }
 
+    private Point ClampToScreen(Point screen)
+    {
+        var rect = ImageScreenRect;
+        return new Point(
+            Math.Clamp(screen.X, rect.X, rect.Right),
+            Math.Clamp(screen.Y, rect.Y, rect.Bottom));
+    }
+
+    private static double Distance(Point a, Point b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return Math.Sqrt(dx * dx + dy * dy);
+    }
+
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        _isPanning = false;
-        _isCropping = false;
+
+        if (_isPanning)
+        {
+            _isPanning = false;
+        }
+        else
+        {
+            EndDrag(e.KeyModifiers);
+        }
+
         e.Pointer.Capture(null);
     }
 

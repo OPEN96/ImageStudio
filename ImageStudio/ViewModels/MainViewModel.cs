@@ -7,6 +7,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ImageStudio.Controls;
 using ImageStudio.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -76,9 +77,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool ShowCheckerboard { get; set; } = true;
-
-    [ObservableProperty]
-    public partial bool IsCropMode { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CropText))]
@@ -179,8 +177,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         SchedulePreview();
     }
 
-    partial void OnIsCropModeChanged(bool value) => OnPropertyChanged(nameof(CropText));
-
     partial void OnCropRectChanged(Rect value) => OnPropertyChanged(nameof(CropText));
 
     // ------------------------------------------------------------------ 文档生命周期
@@ -224,7 +220,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         FilePathText = document.FilePath ?? "尚未保存";
         HasDocument = true;
         IsDirty = document.IsDirty;
-        IsCropMode = false;
+        ActiveTool = CanvasTool.Pan;
+        SetSelection(null);
         _suspendPreview = true;
         Brightness = 0;
         Contrast = 0;
@@ -253,6 +250,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         IsDirty = _document?.IsDirty ?? false;
         UpdateSize();
+
+        // 撤销/重做可能把画布尺寸改回去，此时旧选区已无意义
+        if (_selection is { } selection && _document is { } document &&
+            (selection.Width != document.Width || selection.Height != document.Height))
+            SetSelection(null);
+
         RefreshBitmap();
         RefreshCommandStates();
     }
@@ -329,7 +332,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var adjusted = await Task.Run(() => ImageOps.Adjust(source, b, c, s));
+            var selection = _selection;
+            var adjusted = await Task.Run(() =>
+            {
+                var result = ImageOps.Adjust(source, b, c, s);
+                if (selection is not { IsEmpty: false })
+                    return result;
+
+                var blended = ImageOps.BlendByMask(source, result, selection);
+                result.Dispose();
+                return blended;
+            });
             Image<Bgra32>? composed = null;
 
             try
@@ -373,17 +386,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _isBusy = true;
         IsBusy = true;
 
+        var selection = _selection;
         try
         {
             using (_document.BeginEdit(label))
             {
                 var source = layer.Pixels;
-                var result = await Task.Run(() => operation(source));
+                var result = await Task.Run(() =>
+                {
+                    var output = operation(source);
+                    if (selection is not { IsEmpty: false })
+                        return output;
+
+                    // 有选区时只让操作结果作用在选区内部
+                    var blended = ImageOps.BlendByMask(source, output, selection);
+                    output.Dispose();
+                    return blended;
+                });
                 layer.ReplacePixels(result);
             }
 
             ResetAdjustmentSliders();
-            StatusText = label + " 已完成";
+            StatusText = selection is { IsEmpty: false } ? label + " 已应用到选区" : label + " 已完成";
         }
         catch (Exception ex)
         {
@@ -415,14 +439,29 @@ public partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             var layers = _document.Layers.ToList();
+            var selection = _selection;
+
+            // 选区也要跟着画布一起变换，否则裁剪/旋转后会与图像错位
+            var selectionMask = selection is not null && maskOp is not null ? selection.ToMask() : null;
+
             var results = await Task.Run(() => layers
                 .Select(l => (
                     Pixels: pixelOp(l.Pixels),
                     Mask: l.Mask is null || maskOp is null ? null : maskOp(l.Mask)))
                 .ToList());
 
+            Image<L8>? transformedSelection = null;
+            if (selectionMask is not null && maskOp is not null)
+            {
+                transformedSelection = await Task.Run(() => maskOp(selectionMask));
+                selectionMask.Dispose();
+            }
+
             if (results.Count == 0)
+            {
+                transformedSelection?.Dispose();
                 return;
+            }
 
             using (_document.BeginEdit(label))
             {
@@ -444,6 +483,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
 
                 _document.SetSize(results[0].Pixels.Width, results[0].Pixels.Height);
+            }
+
+            if (transformedSelection is not null)
+            {
+                SetSelection(Selection.FromMask(transformedSelection));
+                transformedSelection.Dispose();
             }
 
             ResetAdjustmentSliders();
@@ -691,14 +736,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return;
 
         CropRect = new Rect(0, 0, _document.Width, _document.Height);
-        IsCropMode = true;
+        ActiveTool = CanvasTool.Crop;
         StatusText = "裁剪：在画布上拖动框选区域，然后点击“应用裁剪”";
     }
 
     [RelayCommand]
     private void CancelCrop()
     {
-        IsCropMode = false;
+        ActiveTool = CanvasTool.Pan;
         StatusText = "已取消裁剪";
     }
 
@@ -718,7 +763,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (rect.Width < 1 || rect.Height < 1)
             return;
 
-        IsCropMode = false;
+        ActiveTool = CanvasTool.Pan;
         await CommitDocumentAsync($"裁剪 {rect.Width}×{rect.Height}",
             img => ImageOps.Crop(img, rect),
             mask => ImageOps.Crop(mask, rect));
@@ -898,6 +943,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         SaveCommand.NotifyCanExecuteChanged();
         ApplyAdjustmentCommand.NotifyCanExecuteChanged();
         NotifyLayerCommands();
+        NotifySelectionCommands();
         OnPropertyChanged(nameof(HasDocument));
     }
 

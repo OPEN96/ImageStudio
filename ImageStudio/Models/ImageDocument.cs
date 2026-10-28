@@ -249,6 +249,31 @@ public sealed class ImageDocument : IDisposable
         _activeIndex = index + 1;
     }
 
+    /// <summary>用给定的像素新建图层（“通过拷贝的图层”）。像素所有权转移给文档。</summary>
+    public Layer AddLayerFromPixels(string name, Image<Bgra32> pixels)
+    {
+        using var _ = BeginEdit("通过拷贝的图层");
+
+        var layer = new Layer(name, pixels);
+        var index = Math.Clamp(_activeIndex + 1, 0, _layers.Count);
+        _layers.Insert(index, layer);
+        _activeIndex = index;
+        return layer;
+    }
+
+    /// <summary>用选区覆盖度作为当前图层的蒙版（白色 = 选区内部）。</summary>
+    public void SetMaskFromSelection(int index, Selection selection)
+    {
+        var layer = LayerAt(index);
+        if (layer is null || selection.Width != layer.Width || selection.Height != layer.Height)
+            return;
+
+        using var _ = BeginEdit("由选区生成蒙版");
+        layer.Mask?.Dispose();
+        layer.Mask = selection.ToMask();
+        layer.MaskEnabled = true;
+    }
+
     public void DeleteLayer(int index)
     {
         if (_layers.Count <= 1)

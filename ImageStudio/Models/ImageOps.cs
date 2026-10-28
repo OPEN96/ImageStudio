@@ -287,4 +287,141 @@ public static class ImageOps
     }
 
     private static double Lum(Bgra32 p) => 0.299 * p.R + 0.587 * p.G + 0.114 * p.B;
+
+    // ---------------------------------------------------------------- 选区相关
+
+    private static bool SameSize(Image<Bgra32> image, Selection selection) =>
+        image.Width == selection.Width && image.Height == selection.Height;
+
+    /// <summary>
+    /// 按选区覆盖度把 <paramref name="top"/> 叠加到 <paramref name="baseImage"/> 上。
+    /// 用于让滤镜 / 调整只作用于选区内部。
+    /// </summary>
+    public static Image<Bgra32> BlendByMask(Image<Bgra32> baseImage, Image<Bgra32> top, Selection selection)
+    {
+        if (!SameSize(baseImage, selection) || !SameSize(top, selection))
+            return baseImage.Clone();
+
+        var pixels = new Bgra32[baseImage.Width * baseImage.Height];
+        baseImage.CopyPixelDataTo(pixels);
+
+        var overlay = new Bgra32[pixels.Length];
+        top.CopyPixelDataTo(overlay);
+
+        var coverage = selection.Coverage;
+
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var c = coverage[i];
+            if (c == 0)
+                continue;
+
+            if (c == 255)
+            {
+                pixels[i] = overlay[i];
+                continue;
+            }
+
+            var b = pixels[i];
+            var t = overlay[i];
+            var k = c / 255.0;
+            pixels[i] = new Bgra32
+            {
+                R = Clamp(b.R + (t.R - b.R) * k),
+                G = Clamp(b.G + (t.G - b.G) * k),
+                B = Clamp(b.B + (t.B - b.B) * k),
+                A = Clamp(b.A + (t.A - b.A) * k)
+            };
+        }
+
+        return Image.LoadPixelData<Bgra32>(pixels, baseImage.Width, baseImage.Height);
+    }
+
+    /// <summary>清空选区内容（把覆盖度折算为透明度）。</summary>
+    public static Image<Bgra32> ClearByMask(Image<Bgra32> src, Selection selection)
+    {
+        if (!SameSize(src, selection))
+            return src.Clone();
+
+        var pixels = new Bgra32[src.Width * src.Height];
+        src.CopyPixelDataTo(pixels);
+        var coverage = selection.Coverage;
+
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var c = coverage[i];
+            if (c == 0)
+                continue;
+
+            var p = pixels[i];
+            var keep = 255 - c;
+            pixels[i] = new Bgra32
+            {
+                R = p.R,
+                G = p.G,
+                B = p.B,
+                A = (byte)(p.A * keep / 255)
+            };
+        }
+
+        return Image.LoadPixelData<Bgra32>(pixels, src.Width, src.Height);
+    }
+
+    /// <summary>在选区内填充颜色。</summary>
+    public static Image<Bgra32> FillByMask(Image<Bgra32> src, Selection selection, Bgra32 color)
+    {
+        if (!SameSize(src, selection))
+            return src.Clone();
+
+        var pixels = new Bgra32[src.Width * src.Height];
+        src.CopyPixelDataTo(pixels);
+        var coverage = selection.Coverage;
+
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var c = coverage[i];
+            if (c == 0)
+                continue;
+
+            if (c == 255)
+            {
+                pixels[i] = color;
+                continue;
+            }
+
+            var p = pixels[i];
+            var k = c / 255.0 * (color.A / 255.0);
+            pixels[i] = new Bgra32
+            {
+                R = Clamp(p.R + (color.R - p.R) * k),
+                G = Clamp(p.G + (color.G - p.G) * k),
+                B = Clamp(p.B + (color.B - p.B) * k),
+                A = Clamp(p.A + (255 - p.A) * k)
+            };
+        }
+
+        return Image.LoadPixelData<Bgra32>(pixels, src.Width, src.Height);
+    }
+
+    /// <summary>提取选区内容到一张等大的透明图（选区外的像素透明）。</summary>
+    public static Image<Bgra32> ExtractByMask(Image<Bgra32> src, Selection selection)
+    {
+        if (!SameSize(src, selection))
+            return src.Clone();
+
+        var pixels = new Bgra32[src.Width * src.Height];
+        src.CopyPixelDataTo(pixels);
+        var coverage = selection.Coverage;
+
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var c = coverage[i];
+            var p = pixels[i];
+            pixels[i] = c == 0
+                ? default
+                : new Bgra32 { R = p.R, G = p.G, B = p.B, A = (byte)(p.A * c / 255) };
+        }
+
+        return Image.LoadPixelData<Bgra32>(pixels, src.Width, src.Height);
+    }
 }
